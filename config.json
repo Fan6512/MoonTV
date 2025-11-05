@@ -79,6 +79,14 @@
     "bdzy": {
       "api": "https://api.apibdzy.com/api.php/provide/vod",
       "name": "百度资源"
-    }
+    },
+    "TV-1080": {
+      "api": "https://api.1080zyku.com/inc/api_mac10.php",
+      "name": "TV-1080资源"
+    },
+     "xbzy": {
+      "api": "https://xingba111.com/api.php/provide/vod",
+      "name": "杏吧资源"
   }
+ }
 }
