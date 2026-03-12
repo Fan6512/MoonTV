@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { Metadata, Viewport } from 'next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Inter } from 'next/font/google';
 
 import './globals.css';
@@ -146,6 +147,8 @@ export default async function RootLayout({
             </SiteProvider>
           </NavigationLoadingProvider>
         </ThemeProvider>
+        {/* Vercel Speed Insights 性能监控 */}
+        <SpeedInsights />
       </body>
     </html>
   );
