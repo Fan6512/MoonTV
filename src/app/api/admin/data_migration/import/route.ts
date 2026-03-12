@@ -8,7 +8,6 @@ import { configSelfCheck, setCachedConfig } from '@/lib/config';
 import { SimpleCrypto } from '@/lib/crypto';
 import { db } from '@/lib/db';
 
-export const runtime = 'edge';
 
 // pako 的 gunzip 是同步的，不需要 promisify
 

@@ -5,7 +5,6 @@ import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApiStream } from '@/lib/downstream';
 import { yellowWords } from '@/lib/yellow';
 
-export const runtime = 'edge';
 
 // OrionTV 兼容接口（JSON 非流式）
 export async function GET(request: NextRequest) {

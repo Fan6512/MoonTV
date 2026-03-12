@@ -8,7 +8,6 @@ import { SimpleCrypto } from '@/lib/crypto';
 import { db } from '@/lib/db';
 import { CURRENT_VERSION } from '@/lib/version';
 
-export const runtime = 'edge';
 
 // pako 的 gzip 是同步的，不需要 promisify
 

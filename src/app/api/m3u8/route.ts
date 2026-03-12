@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { downloadTsSegment, parseM3U8 } from '@/lib/m3u8-downloader';
 
-export const runtime = 'edge';
 
 /**
  * 解析M3U8文件接口

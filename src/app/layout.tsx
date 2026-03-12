@@ -20,7 +20,6 @@ import SubscriptionAutoUpdate from '../components/SubscriptionAutoUpdate';
 import { ThemeProvider } from '../components/ThemeProvider';
 import UserOnlineUpdate from '../components/UserOnlineUpdate';
 
-export const runtime = 'edge';
 
 const inter = Inter({ subsets: ['latin'] });
 

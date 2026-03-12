@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { getStorage } from '@/lib/db';
 
-export const runtime = 'edge';
 
 export async function GET(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
@@ -106,6 +106,7 @@ export async function POST(request: NextRequest) {
   const storage = getStorage();
   if (storage && typeof (storage as any).setAdminConfig === 'function') {
     await (storage as any).setAdminConfig(adminConfig);
+    revalidateTag('site-config');
   }
 
   const base = new URL(request.url);

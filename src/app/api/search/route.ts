@@ -7,7 +7,6 @@ import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApiStream } from '@/lib/downstream';
 import { yellowWords } from '@/lib/yellow';
 
-export const runtime = 'edge';
 
 export async function GET(request: NextRequest) {
   // 检查是否为本地存储模式

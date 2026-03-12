@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any,no-console */
 
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
@@ -7,7 +8,6 @@ import { getConfig } from '@/lib/config';
 import { getStorage } from '@/lib/db';
 import { IStorage } from '@/lib/types';
 
-export const runtime = 'edge';
 
 type Action =
   | 'create'
@@ -138,6 +138,7 @@ export async function POST(request: NextRequest) {
 
     if (storage && typeof (storage as any).setAdminConfig === 'function') {
       await (storage as any).setAdminConfig(adminConfig);
+      revalidateTag('site-config');
     }
     return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

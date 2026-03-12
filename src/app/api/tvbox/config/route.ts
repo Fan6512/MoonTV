@@ -4,7 +4,6 @@ import { NextResponse } from 'next/server';
 
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 
-export const runtime = 'edge';
 
 /**
  * TVBox 配置接口

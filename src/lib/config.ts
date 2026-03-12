@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, @typescript-eslint/no-non-null-assertion */
 
+import { unstable_cache } from 'next/cache';
+
 import { getStorage } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
@@ -422,6 +424,29 @@ async function initConfig() {
   }
 }
 
+// 抽取为通过 unstable_cache 包裹的只读获取配置函数
+const fetchCachedAdminConfig = unstable_cache(
+  async () => {
+    const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+    // 若不是本地存储，那么从数据库读取
+    if (storageType !== 'localstorage') {
+      const storage = getStorage();
+      if (storage && typeof (storage as any).getAdminConfig === 'function') {
+        const adminConfig = await (storage as any).getAdminConfig();
+        if (adminConfig) {
+          return adminConfig as AdminConfig;
+        }
+      }
+    }
+    return null;
+  },
+  ['app-admin-config'], // 缓存 key
+  {
+    tags: ['site-config'], // 用于 revalidateTag 的标签
+    revalidate: 3600, // 给预留一个一小时失效的保底，但主要靠接口按需更新
+  }
+);
+
 export async function getConfig(): Promise<AdminConfig> {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   if (storageType === 'localstorage') {
@@ -429,12 +454,7 @@ export async function getConfig(): Promise<AdminConfig> {
     return cachedConfig;
   }
 
-  // 非本地存储，直接读 db 配置
-  const storage = getStorage();
-  let adminConfig: AdminConfig | null = null;
-  if (storage && typeof (storage as any).getAdminConfig === 'function') {
-    adminConfig = await (storage as any).getAdminConfig();
-  }
+  let adminConfig: AdminConfig | null = await fetchCachedAdminConfig();
 
   if (adminConfig) {
     // 确保 CustomCategories 被初始化

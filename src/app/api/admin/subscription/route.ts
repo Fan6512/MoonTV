@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any,no-console */
 
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
@@ -7,7 +8,6 @@ import { configSelfCheck,getConfig } from '@/lib/config';
 import { getStorage } from '@/lib/db';
 import { IStorage } from '@/lib/types';
 
-export const runtime = 'edge';
 
 // 支持的操作类型
 type Action = 'update' | 'import' | 'check';
@@ -227,6 +227,7 @@ export async function POST(request: NextRequest) {
         // 保存配置
         if (storage && typeof (storage as any).setAdminConfig === 'function') {
           await (storage as any).setAdminConfig(configSelfCheck(adminConfig));
+          revalidateTag('site-config');
         }
         return NextResponse.json({ success: true });
       }
@@ -248,6 +249,7 @@ export async function POST(request: NextRequest) {
         // 保存配置
         if (storage && typeof (storage as any).setAdminConfig === 'function') {
           await (storage as any).setAdminConfig(configSelfCheck(adminConfig));
+          revalidateTag('site-config');
         }
         return NextResponse.json({ success: true, imported: true });
       }
@@ -275,6 +277,7 @@ export async function POST(request: NextRequest) {
             // 保存配置
             if (storage && typeof (storage as any).setAdminConfig === 'function') {
               await (storage as any).setAdminConfig(configSelfCheck(adminConfig));
+              revalidateTag('site-config');
             }
             return NextResponse.json({ success: true, updated: true, imported: true });
           } catch (error) {
