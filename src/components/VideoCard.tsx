@@ -38,6 +38,7 @@ interface VideoCardProps {
   items?: SearchResult[];
   type?: string;
   isBangumi?: boolean;
+  priority?: boolean;
 }
 
 export default function VideoCard({
@@ -58,6 +59,7 @@ export default function VideoCard({
   items,
   type = '',
   isBangumi = false,
+  priority = false,
 }: VideoCardProps) {
   const router = useRouter();
   const { startLoading } = useNavigationLoading();
@@ -321,9 +323,10 @@ export default function VideoCard({
           src={processImageUrl(actualPoster)}
           alt={actualTitle}
           fill
+          priority={priority}
           className='object-cover'
           referrerPolicy='no-referrer'
-          loading='lazy'
+          loading={priority ? undefined : 'lazy'}
           onLoad={() => setIsLoading(true)}
           onError={(e) => {
             const img = e.target as HTMLImageElement;

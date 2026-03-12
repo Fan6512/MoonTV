@@ -321,6 +321,7 @@ function HomeClient() {
                                 rate={movie.rate}
                                 year={movie.year}
                                 type='movie'
+                                priority={index < 4}
                               />
                             </div>
                           ))}
