@@ -813,13 +813,16 @@ export async function resetConfig() {
   cachedConfig.SubscriptionConfig = adminConfig.SubscriptionConfig;
 }
 
-export async function getCacheTime(): Promise<number> {
-  const config = await getConfig();
+export async function getCacheTime(configOverride?: AdminConfig): Promise<number> {
+  const config = configOverride ?? (await getConfig());
   return config.SiteConfig.SiteInterfaceCacheTime || 7200;
 }
 
-export async function getAvailableApiSites(username?: string): Promise<ApiSite[]> {
-  const config = await getConfig();
+export async function getAvailableApiSites(
+  username?: string,
+  configOverride?: AdminConfig
+): Promise<ApiSite[]> {
+  const config = configOverride ?? (await getConfig());
   const all = config.SourceConfig.filter((s) => !s.disabled);
   if (!username || !config.UserConfig?.Groups || config.UserConfig.Groups.length === 0) {
     return all.map((s) => ({ key: s.key, name: s.name, api: s.api, detail: s.detail }));

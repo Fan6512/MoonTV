@@ -1,8 +1,11 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { memo, useEffect, useState } from 'react';
 
-import DownloadManager from './DownloadManager';
+const DownloadManager = dynamic(() => import('./DownloadManager'), {
+  ssr: false,
+});
 
 /**
  * 全局下载管理器组件
@@ -27,12 +30,12 @@ const GlobalDownloadManager = () => {
     };
   }, []);
 
-  return (
+  return showDownloadManager ? (
     <DownloadManager
       isOpen={showDownloadManager}
       onClose={() => setShowDownloadManager(false)}
     />
-  );
+  ) : null;
 };
 
 // 使用 React.memo 优化

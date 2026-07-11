@@ -134,7 +134,7 @@ function SearchPageClient() {
       if (bYear === 'unknown') return 1;
       return aYear > bYear ? -1 : 1;
     });
-  }, [searchResults]);
+  }, [searchResults, searchQuery]);
 
   // 用于筛选后的聚合结果，保证类型安全
   const filteredAggregatedResults: [string, SearchResult[]][] = useMemo(() => {
@@ -568,9 +568,20 @@ const sortedAggregatedResults: { exact: [string, SearchResult[]][], others: [str
   };
 
   // 生成筛选选项
-  const sourceOptions = Array.from(new Set(searchResults.map((r) => r.source_name))).sort();
-  const titleOptions = Array.from(new Set(searchResults.map((r) => r.title))).sort();
-  const yearOptions = Array.from(new Set(searchResults.map((r) => r.year))).sort();
+  const { sourceOptions, titleOptions, yearOptions } = useMemo(
+    () => ({
+      sourceOptions: Array.from(
+        new Set(searchResults.map((result) => result.source_name))
+      ).sort(),
+      titleOptions: Array.from(
+        new Set(searchResults.map((result) => result.title))
+      ).sort(),
+      yearOptions: Array.from(
+        new Set(searchResults.map((result) => result.year))
+      ).sort(),
+    }),
+    [searchResults]
+  );
 
   // 处理排序字段变化的包装函数
   const handleSortFieldChange = (field: string) => {

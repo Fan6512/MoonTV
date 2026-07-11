@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   const config = await getConfig();
   
   // 获取用户可用的搜索源
-  let apiSites = await getAvailableApiSites(authInfo?.username);
+  let apiSites = await getAvailableApiSites(authInfo?.username, config);
   
   // 如果指定了搜索源，只使用选中的搜索源
   const selectedSourcesParam = searchParams.get('sources');
@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
         },
       });
     } else {
-      const cacheTime = await getCacheTime();
+    const cacheTime = await getCacheTime(config);
       const body = { results: aggregatedResults, failedSources };
       return new Response(JSON.stringify(body), {
         headers: {
@@ -230,7 +230,7 @@ export async function GET(request: NextRequest) {
     }
   })();
 
-  const cacheTime = await getCacheTime();
+  const cacheTime = await getCacheTime(config);
   return new Response(readable, {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',

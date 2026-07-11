@@ -37,7 +37,10 @@ function HomeClient() {
   const [bangumiCalendarData, setBangumiCalendarData] = useState<
     BangumiCalendarData[]
   >([]);
-  const [loading, setLoading] = useState(true);
+  const [moviesLoading, setMoviesLoading] = useState(true);
+  const [tvShowsLoading, setTvShowsLoading] = useState(true);
+  const [varietyShowsLoading, setVarietyShowsLoading] = useState(true);
+  const [bangumiLoading, setBangumiLoading] = useState(true);
   const { announcement } = useSite();
   const { startLoading } = useNavigationLoading();
 
@@ -84,54 +87,77 @@ function HomeClient() {
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
 
   useEffect(() => {
-    const fetchRecommendData = async () => {
-      try {
-        setLoading(true);
+    let cancelled = false;
 
-        // 检查是否启用简洁模式
-        const savedSimpleMode = localStorage.getItem('simpleMode');
-        const isSimpleMode = savedSimpleMode ? JSON.parse(savedSimpleMode) : false;
+    const savedSimpleMode = localStorage.getItem('simpleMode');
+    const isSimpleMode = savedSimpleMode === 'true';
 
-        if (isSimpleMode) {
-          // 简洁模式下跳过豆瓣数据获取
-          setLoading(false);
-          return;
-        }
+    if (isSimpleMode) {
+      setMoviesLoading(false);
+      setTvShowsLoading(false);
+      setVarietyShowsLoading(false);
+      setBangumiLoading(false);
+      return;
+    }
 
-        // 并行获取热门电影、热门剧集和热门综艺
-        const [moviesData, tvShowsData, varietyShowsData, bangumiCalendarData] =
-          await Promise.all([
-            getDoubanCategories({
-              kind: 'movie',
-              category: '热门',
-              type: '全部',
-            }),
-            getDoubanCategories({ kind: 'tv', category: 'tv', type: 'tv' }),
-            getDoubanCategories({ kind: 'tv', category: 'show', type: 'show' }),
-            GetBangumiCalendarData(),
-          ]);
+    const loadMovies = getDoubanCategories({
+      kind: 'movie',
+      category: '热门',
+      type: '全部',
+    })
+      .then((data) => {
+        if (!cancelled && data.code === 200) setHotMovies(data.list);
+      })
+      .catch((error) => console.error('获取热门电影失败:', error))
+      .finally(() => {
+        if (!cancelled) setMoviesLoading(false);
+      });
 
-        if (moviesData.code === 200) {
-          setHotMovies(moviesData.list);
-        }
+    const loadTvShows = getDoubanCategories({
+      kind: 'tv',
+      category: 'tv',
+      type: 'tv',
+    })
+      .then((data) => {
+        if (!cancelled && data.code === 200) setHotTvShows(data.list);
+      })
+      .catch((error) => console.error('获取热门剧集失败:', error))
+      .finally(() => {
+        if (!cancelled) setTvShowsLoading(false);
+      });
 
-        if (tvShowsData.code === 200) {
-          setHotTvShows(tvShowsData.list);
-        }
+    const loadVarietyShows = getDoubanCategories({
+      kind: 'tv',
+      category: 'show',
+      type: 'show',
+    })
+      .then((data) => {
+        if (!cancelled && data.code === 200) setHotVarietyShows(data.list);
+      })
+      .catch((error) => console.error('获取热门综艺失败:', error))
+      .finally(() => {
+        if (!cancelled) setVarietyShowsLoading(false);
+      });
 
-        if (varietyShowsData.code === 200) {
-          setHotVarietyShows(varietyShowsData.list);
-        }
+    const loadBangumi = GetBangumiCalendarData()
+      .then((data) => {
+        if (!cancelled) setBangumiCalendarData(data);
+      })
+      .catch((error) => console.error('获取新番日历失败:', error))
+      .finally(() => {
+        if (!cancelled) setBangumiLoading(false);
+      });
 
-        setBangumiCalendarData(bangumiCalendarData);
-      } catch (error) {
-        console.error('获取推荐数据失败:', error);
-      } finally {
-        setLoading(false);
-      }
+    void Promise.all([
+      loadMovies,
+      loadTvShows,
+      loadVarietyShows,
+      loadBangumi,
+    ]);
+
+    return () => {
+      cancelled = true;
     };
-
-    fetchRecommendData();
   }, []);
 
   // 处理收藏数据更新的函数
@@ -294,7 +320,7 @@ function HomeClient() {
                       </Link>
                     </div>
                     <ScrollableRow>
-                      {loading
+                      {moviesLoading
                         ? // 加载状态显示灰色占位数据
                           Array.from({ length: 8 }).map((_, index) => (
                             <div
@@ -344,7 +370,7 @@ function HomeClient() {
                       </Link>
                     </div>
                     <ScrollableRow>
-                      {loading
+                      {tvShowsLoading
                         ? // 加载状态显示灰色占位数据
                           Array.from({ length: 8 }).map((_, index) => (
                             <div
@@ -392,7 +418,7 @@ function HomeClient() {
                       </Link>
                     </div>
                     <ScrollableRow>
-                      {loading
+                      {bangumiLoading
                         ? // 加载状态显示灰色占位数据
                           Array.from({ length: 8 }).map((_, index) => (
                             <div
@@ -468,7 +494,7 @@ function HomeClient() {
                       </Link>
                     </div>
                     <ScrollableRow>
-                      {loading
+                      {varietyShowsLoading
                         ? // 加载状态显示灰色占位数据
                           Array.from({ length: 8 }).map((_, index) => (
                             <div
