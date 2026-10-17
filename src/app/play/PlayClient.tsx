@@ -2,16 +2,27 @@
 
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import AddDownloadModal from '@/components/AddDownloadModal';
 import { BackButton } from '@/components/BackButton';
-import CacheManager from '@/components/CacheManager';
-import DanmakuSelector from '@/components/DanmakuSelector';
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
+
+// 三个重型面板改为按需加载：它们内部静态引入了 m3u8 下载器
+// （crypto-js + mux.js 约 320KB），而绝大多数用户不会打开它们。
+const AddDownloadModal = dynamic(
+  () => import('@/components/AddDownloadModal'),
+  { ssr: false }
+);
+const CacheManager = dynamic(() => import('@/components/CacheManager'), {
+  ssr: false,
+});
+const DanmakuSelector = dynamic(() => import('@/components/DanmakuSelector'), {
+  ssr: false,
+});
 
 import { PlayerOverlayHeader } from './components/PlayerOverlayHeader';
 import { ErrorView, LoadingView, VideoLoadingMask } from './components/PlayStatusView';
@@ -237,33 +248,40 @@ export default function PlayClient() {
         </div>
       </div>
 
-      {/* 添加下载弹窗 */}
-      <AddDownloadModal
-        isOpen={showAddDownload}
-        onClose={() => setShowAddDownload(false)}
-        onAddTask={(config) => {
-          // 触发自定义事件，通知导航栏的下载管理器
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('addDownloadTask', { detail: config })
-            );
-          }
-          setShowAddDownload(false);
-        }}
-        initialUrl={videoUrl || ''}
-        episodes={(detail?.episodes || []).map((url, i) => ({
-          url,
-          title: `${videoTitle}_${detail?.episodes_titles?.[i] || `第${i + 1}集`}`,
-          label: detail?.episodes_titles?.[i] || `第${i + 1}集`,
-        }))}
-        currentEpisodeIndex={currentEpisodeIndex}
-        initialTitle={`${videoTitle}${
-          totalEpisodes > 1
-            ? `_${detail?.episodes_titles?.[currentEpisodeIndex] || `第${currentEpisodeIndex + 1}集`}`
-            : ''
-        }`}
-        skipConfig={skipConfig}
-      />
+      {/* 添加下载弹窗：仅在打开时挂载，否则 dynamic 只是延迟加载而非真正跳过 */}
+      {showAddDownload && (
+        <AddDownloadModal
+          isOpen={showAddDownload}
+          onClose={() => setShowAddDownload(false)}
+          onAddTask={(config) => {
+            // 触发自定义事件，通知导航栏的下载管理器
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('addDownloadTask', { detail: config })
+              );
+            }
+            setShowAddDownload(false);
+          }}
+          initialUrl={videoUrl || ''}
+          episodes={(detail?.episodes || []).map((url, i) => ({
+            url,
+            title: `${videoTitle}_${
+              detail?.episodes_titles?.[i] || `第${i + 1}集`
+            }`,
+            label: detail?.episodes_titles?.[i] || `第${i + 1}集`,
+          }))}
+          currentEpisodeIndex={currentEpisodeIndex}
+          initialTitle={`${videoTitle}${
+            totalEpisodes > 1
+              ? `_${
+                  detail?.episodes_titles?.[currentEpisodeIndex] ||
+                  `第${currentEpisodeIndex + 1}集`
+                }`
+              : ''
+          }`}
+          skipConfig={skipConfig}
+        />
+      )}
     </PageLayout>
   );
 }

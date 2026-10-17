@@ -4,8 +4,8 @@
 
 import { Download, Heart } from 'lucide-react';
 
+import { processImageUrl } from '@/lib/image-utils';
 import { SearchResult } from '@/lib/types';
-import { processImageUrl } from '@/lib/utils';
 
 import { FollowingIconButton } from '@/components/FollowingIcon';
 

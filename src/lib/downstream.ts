@@ -1,6 +1,6 @@
 import { API_CONFIG, ApiSite, getConfig } from '@/lib/config';
+import { cleanHtmlTags } from '@/lib/html-utils';
 import { SearchResult } from '@/lib/types';
-import { cleanHtmlTags } from '@/lib/utils';
 
 interface ApiSearchItem {
   vod_id: string;
