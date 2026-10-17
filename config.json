@@ -13,6 +13,10 @@
       "name": "红牛",
       "api": "https://www.hongniuzy2.com/api.php/provide/vod"
     },
+    "尤酷": {
+      "name": "尤酷",
+      "api": "https://api.ukuapi88.com/api.php/provide/vod/"
+    },
     "光速": {
       "name": "光速",
       "api": "https://api.guangsuapi.com/api.php/provide/vod/"
@@ -24,6 +28,10 @@
     "非凡": {
       "name": "非凡",
       "api": "https://api.ffzyapi.com/api.php/provide/vod"
+    },
+    "百度云": {
+      "name": "百度云",
+      "api": "https://api.apibdzy.com/api.php/provide/vod/"
     },
     "虎牙": {
       "name": "虎牙",
