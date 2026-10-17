@@ -113,6 +113,9 @@ function importSources(adminConfig: any, subscriptionData: any, importMode: 'ove
   });
 }
 
+// 依赖请求 cookie，必须在请求期渲染，避免 build 阶段静态预渲染。
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   if (storageType === 'localstorage') {

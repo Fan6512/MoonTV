@@ -38,6 +38,9 @@ function validateRecord(body: any): TodayUpdatedRecord | null {
   return { date, items };
 }
 
+// 依赖请求 cookie，必须在请求期渲染，避免 build 阶段静态预渲染。
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const authInfo = getAuthInfoFromCookie(request);

@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApiStream } from '@/lib/downstream'; // 改用流式方法
 
+// 本路由依赖查询参数，必须在请求期渲染，避免 build 阶段被静态预渲染。
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
