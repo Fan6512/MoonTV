@@ -38,17 +38,14 @@ import {
   resolveLevelHeight,
   savePreferredQualityHeight,
 } from '@/lib/hls-quality';
+import { processImageUrl } from '@/lib/image-utils';
 import {
   describeHlsError,
   PlaybackRecovery,
 } from '@/lib/playback-recovery';
 import { getDefaultPlaybackSaveInterval } from '@/lib/playback-settings';
 import { SearchResult } from '@/lib/types';
-import {
-  getRequestTimeout,
-  getVideoResolutionFromM3u8,
-  processImageUrl,
-} from '@/lib/utils';
+import { getRequestTimeout } from '@/lib/utils';
 import {
   getSegmentProbe,
   loadCacheSettings,
@@ -60,6 +57,7 @@ import {
   getVideoPrefetcher,
   PrefetchStats,
 } from '@/lib/video-prefetcher';
+import { getVideoResolutionFromM3u8 } from '@/lib/video-probe';
 
 import { triggerGlobalError } from '@/components/GlobalErrorIndicator';
 
@@ -361,13 +359,17 @@ export function usePlayEngine() {
     videoYear,
   ]);
 
-  // 切集时清空"已试过的源"与"自动换源次数"：
-  // 某个源只是这一集挂了，不代表下一集也挂，不该把惩罚带到下一集。
+  // 两类状态的生命周期不同，必须分开重置：
+  // 1) "本集已试过哪些源 / 自动换了几次" 属于**集**级别，只在切集时清零。
+  //    之前把它和 currentSource 绑在一起，自动换源改 source 后计数被清零，
+  //    MAX_AUTO_SOURCE_SWITCHES 永远达不到，A↔B 会无限重连。
   useEffect(() => {
     triedSourcesRef.current = new Set();
     autoSwitchCountRef.current = 0;
-    // 切集/换源后"下一集"的目标变了，旧的预热队列立刻作废。
-    // 已经落盘的分片不受影响（缓存键与集数无关），不会白费。
+  }, [currentEpisodeIndex]);
+
+  // 2) "下一集预热队列" 属于**集 + 源**级别：换源后旧的预热目标已作废，需要重建。
+  useEffect(() => {
     nextWarmupKeyRef.current = null;
     getNextEpisodePrefetcher().stop();
   }, [currentEpisodeIndex, currentSource, currentId]);
@@ -976,7 +978,10 @@ export function usePlayEngine() {
 
       setLoadingStage('ready');
       setLoadingMessage('✨ 准备就绪，即将开始播放...');
-      setTimeout(() => setLoading(false), 500);
+      // 立即解除加载态。PlayClient 在 loading 为真时不渲染播放器容器，
+      // 建播 effect 又要求 !loading && artRef.current，因此这里任何延迟
+      // 都不是"动画"，而是直接叠加到首帧上的串行等待。
+      setLoading(false);
     }
 
     const initAll = async () => {
@@ -1005,33 +1010,63 @@ export function usePlayEngine() {
         }
       })();
 
+      // 第一性原理拆解：
+      //   需求 A「开始播放」只依赖当前这一个源的详情；
+      //   需求 B「可换源」才需要全站源列表。
+      // 二者没有先后依赖，之前却串行执行，导致首帧被"最慢的源"阻塞（最坏 30s）。
+      // 现在 A 走单源直连，B 在后台流式填充，互不等待。
+      const targetSource = currentSource;
+      const targetId = currentId;
+
       let detailData: SearchResult | null = null;
-      let allResults: SearchResult[] = [];
       let hasInitialized = false; // 标记是否已经初始化过播放数据
 
-      await fetchSourcesData(videoTitle, (newResults) => {
-        allResults = [...allResults, ...newResults];
+      // B：换源列表后台收集，不阻塞建播
+      const sourcesPromise = fetchSourcesData(videoTitle);
 
-        // 如果还没确定 detailData，就尝试找目标源
-        if (!detailData && currentSource && currentId) {
-          const match = newResults.find(
-            (item) => item.source === currentSource && item.id === currentId
+      // A：已知 source + id 时单源直连详情（一次上游请求）
+      if (targetSource && targetId) {
+        try {
+          const res = await fetch(
+            `/api/detail?source=${encodeURIComponent(
+              targetSource
+            )}&id=${encodeURIComponent(targetId)}`
           );
-          if (match) {
-            detailData = match;
-            // 如果未启用优选，立即初始化播放数据
-            if (!enablePreferBestSourceFromStorage) {
-              initDetail(detailData);
-              hasInitialized = true;
+          if (res.ok) {
+            const direct = (await res.json()) as SearchResult;
+            if (
+              direct &&
+              Array.isArray(direct.episodes) &&
+              direct.episodes.length > 0
+            ) {
+              detailData = direct;
+              // 未启用优选：立刻建播，不等其它源
+              if (!enablePreferBestSourceFromStorage) {
+                initDetail(direct);
+                hasInitialized = true;
+              }
             }
-            // 如果启用优选，则等待所有源收集完再决定是否优选
           }
+        } catch (err) {
+          // 直连失败不致命，下面会用搜索流兜底
+          console.warn('直连详情失败，回落到搜索流:', err);
         }
-      });
+      }
 
-      // 流式搜索结束：如果目标源没找到，就 fallback
-      if (!detailData && allResults.length > 0) {
-        detailData = allResults[0];
+      const allResults = await sourcesPromise;
+
+      // 直连失败 / 无 source+id 时，用搜索流结果兜底
+      if (!detailData) {
+        if (targetSource && targetId) {
+          detailData =
+            allResults.find(
+              (item) => item.source === targetSource && item.id === targetId
+            ) ?? null;
+        }
+        // 目标源没找到，就 fallback 到第一条结果
+        if (!detailData && allResults.length > 0) {
+          detailData = allResults[0];
+        }
       }
 
       // 完全没结果
