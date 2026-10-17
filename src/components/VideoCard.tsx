@@ -73,6 +73,8 @@ export default function VideoCard({
   const [favorited, setFavorited] = useState(false);
   const [following, setFollowing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // 海报两次加载都失败时，交给占位图，避免浏览器把「坏图标」画在卡片上
+  const [posterFailed, setPosterFailed] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [favoriteChecked, setFavoriteChecked] = useState(false); // 是否已经检查过收藏状态
   const [followingChecked, setFollowingChecked] = useState(false); // 是否已经检查过追更状态
@@ -411,18 +413,25 @@ export default function VideoCard({
           alt={actualTitle}
           fill
           priority={priority}
-          className='object-cover'
+          className={posterFailed ? 'opacity-0' : 'object-cover'}
           referrerPolicy='no-referrer'
           loading={priority ? undefined : 'lazy'}
-          onLoad={() => setIsLoading(true)}
+          onLoad={() => {
+            setIsLoading(true);
+            setPosterFailed(false);
+          }}
           onError={(e) => {
             const img = e.target as HTMLImageElement;
             if (!img.dataset.retried) {
+              // 源站海报地址偶发抖动，先重试一次
               img.dataset.retried = 'true';
               setTimeout(() => {
                 img.src = processImageUrl(actualPoster);
               }, 2000);
+              return;
             }
+            // 重试仍失败：隐藏图片，露出下方占位图
+            setPosterFailed(true);
           }}
         />
 

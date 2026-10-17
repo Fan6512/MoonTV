@@ -44,6 +44,7 @@ import {
   PlaybackRecovery,
 } from '@/lib/playback-recovery';
 import { getDefaultPlaybackSaveInterval } from '@/lib/playback-settings';
+import { isSameVideoTitle } from '@/lib/title-utils';
 import { SearchResult } from '@/lib/types';
 import { getRequestTimeout } from '@/lib/utils';
 import {
@@ -898,16 +899,21 @@ export function usePlayEngine() {
                 if (data.pageResults) {
                   const filteredResults: SearchResult[] =
                     data.pageResults.filter((r: SearchResult) => {
-                      const titleMatch =
-                        r.title.trim().replace(/\s+/g, ' ').toLowerCase() ===
+                      // 各源对同一部片的写法不一致（九门 / 九门2026 / 九门(2026)），
+                      // 必须归一化后再比较，否则换源列表会被拆成互不相认的几组。
+                      const titleMatch = isSameVideoTitle(
+                        r.title,
                         videoTitleRef.current
-                          .trim()
-                          .replace(/\s+/g, ' ')
-                          .toLowerCase();
-                      const yearMatch = videoYearRef.current
-                        ? r.year.toLowerCase() ===
-                          videoYearRef.current.toLowerCase()
-                        : true;
+                      );
+                      // 年份只作为辅助判据：任一源标记为 unknown 时不据此排除，
+                      // 否则「拿不到年份」会被当成「年份不符」。
+                      const targetYear = (videoYearRef.current || '').toLowerCase();
+                      const resultYear = (r.year || '').toLowerCase();
+                      const yearMatch =
+                        !targetYear ||
+                        !resultYear ||
+                        resultYear === 'unknown' ||
+                        resultYear === targetYear;
                       const typeMatch = searchType
                         ? (searchType === 'tv' && r.episodes.length > 1) ||
                           (searchType === 'movie' && r.episodes.length === 1)
