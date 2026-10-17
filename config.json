@@ -1,41 +1,53 @@
 {
   "cache_time": 7200,
   "api_site": {
-    "索尼": {
-      "name": "索尼",
-      "api": "https://suoniapi.com/api.php/provide/vod"
+    "量子": {
+      "name": "量子",
+      "api": "https://cj.lziapi.com/api.php/provide/vod"
     },
     "豪华": {
       "name": "豪华",
       "api": "https://hhzyapi.com/api.php/provide/vod"
     },
-    "量子资源": {
-      "name": "量子资源",
-      "api": "https://cj.lzcaiji.com/api.php/provide/vod"
+    "红牛": {
+      "name": "红牛",
+      "api": "https://www.hongniuzy2.com/api.php/provide/vod"
+    },
+    "尤酷": {
+      "name": "尤酷",
+      "api": "https://api.ukuapi88.com/api.php/provide/vod/"
+    },
+    "光速": {
+      "name": "光速",
+      "api": "https://api.guangsuapi.com/api.php/provide/vod/"
+    },
+    "无尽": {
+      "name": "无尽",
+      "api": "https://api.wujinapi.me/api.php/provide/vod/"
+    },
+    "非凡": {
+      "name": "非凡",
+      "api": "https://api.ffzyapi.com/api.php/provide/vod"
+    },
+    "百度云": {
+      "name": "百度云",
+      "api": "https://api.apibdzy.com/api.php/provide/vod/"
+    },
+    "虎牙": {
+      "name": "虎牙",
+      "api": "https://huyazy.net/api.php/provide/vod/"
+    },
+    "极速": {
+      "name": "极速",
+      "api": "https://jszyapi.com/api.php/provide/vod/"
     },
     "暴风": {
       "name": "暴风",
       "api": "https://bfzyapi.com/api.php/provide/vod"
     },
-    "牛牛": {
-      "name": "牛牛",
-      "api": "https://api.niuniuzy.me/api.php/provide/vod/"
-    },
-    "量子": {
-      "name": "量子",
-      "api": "https://cj.lziapi.com/api.php/provide/vod"
-    },
-    "红牛": {
-      "name": "红牛",
-      "api": "https://www.hongniuzy2.com/api.php/provide/vod"
-    },
     "魔都": {
       "name": "魔都",
       "api": "https://www.mdzyapi.com/api.php/provide/vod"
-    },
-    "非凡": {
-      "name": "非凡",
-      "api": "https://api.ffzyapi.com/api.php/provide/vod"
     },
     "IK": {
       "name": "IK",
