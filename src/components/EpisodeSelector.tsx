@@ -222,12 +222,23 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
       if (pendingSources.length === 0) return;
 
-      const batchSize = Math.ceil(pendingSources.length / 2);
-
-      for (let start = 0; start < pendingSources.length; start += batchSize) {
-        const batch = pendingSources.slice(start, start + batchSize);
-        await Promise.all(batch.map(getVideoInfo));
-      }
+      // 并发池：同时最多 4 个。
+      // 原实现把源切成两半、每半一次性并发，11 个源时会同时下载 6 个首分片，
+      // 互相抢带宽 → 大量请求超过超时 → 界面显示「无测速数据」。
+      // 用完成即补位的池，既限制峰值又不会像分批那样被最慢的一个拖住。
+      const CONCURRENCY = 4;
+      let cursor = 0;
+      const workers = Array.from(
+        { length: Math.min(CONCURRENCY, pendingSources.length) },
+        async () => {
+          while (cursor < pendingSources.length) {
+            const next = pendingSources[cursor];
+            cursor += 1;
+            await getVideoInfo(next);
+          }
+        }
+      );
+      await Promise.all(workers);
     };
 
     fetchVideoInfosInBatches();
@@ -699,8 +710,11 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                                   );
                                 } else {
                                   return (
-                                    <div className='text-red-500/90 dark:text-red-400 font-medium text-xs'>
-                                      无测速数据
+                                    <div
+                                      className='text-red-500/90 dark:text-red-400 font-medium text-xs'
+                                      title='测速请求超时或失败，不代表片源不可播放'
+                                    >
+                                      测速失败
                                     </div>
                                   ); // 占位div
                                 }

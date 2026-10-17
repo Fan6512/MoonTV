@@ -37,12 +37,14 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       // 固定使用hls.js加载
       const hls = new Hls();
 
-      // 设置超时处理
+      // 超时处理：探测要完成「拉 manifest → 拉变体 → 下载首个分片」三段，
+      // 4s 在跨境 CDN 上经常不够，会把能播的源误判为失败，故放宽到 8s。
+      // 并发已由调用方限制（EpisodeSelector 用 4 路池），不会因此拖长整体耗时。
       const timeout = setTimeout(() => {
         hls.destroy();
         video.remove();
         reject(new Error('Timeout loading video metadata'));
-      }, 4000);
+      }, 8000);
 
       video.onerror = () => {
         clearTimeout(timeout);
