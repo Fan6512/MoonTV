@@ -40,7 +40,12 @@ import Swal from 'sweetalert2';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
+import {
+  getDefaultPlaybackSaveInterval,
+  PLAYBACK_SAVE_DEFAULT_SECONDS,
+} from '@/lib/playback-settings';
 
+import { BackButton } from '@/components/BackButton';
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
 
@@ -67,10 +72,13 @@ interface SiteConfig {
   DoubanProxy: string;
   DoubanImageProxyType: string;
   DoubanImageProxy: string;
+  BangumiProxy?: string;
+  BangumiImageProxy?: string;
   DisableYellowFilter: boolean;
   TVBoxEnabled?: boolean;
   TVBoxPassword?: string;
   DanmakuApiBaseUrl?: string;
+  PlaybackSaveInterval?: number;
 }
 
 // 视频源数据类型
@@ -2217,10 +2225,13 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
     DoubanProxy: '',
     DoubanImageProxyType: 'direct',
     DoubanImageProxy: '',
+    BangumiProxy: '',
+    BangumiImageProxy: '',
     DisableYellowFilter: false,
     TVBoxEnabled: false,
     TVBoxPassword: '',
     DanmakuApiBaseUrl: '',
+    PlaybackSaveInterval: PLAYBACK_SAVE_DEFAULT_SECONDS,
   });
   // 保存状态
   const [saving, setSaving] = useState(false);
@@ -2287,6 +2298,15 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
     typeof window !== 'undefined' &&
     (window as any).RUNTIME_CONFIG?.STORAGE_TYPE === 'localstorage';
 
+  // 播放进度保存间隔的默认值：环境变量优先，否则按存储类型取默认（Upstash 20s，其余 5s）
+  const defaultSaveInterval =
+    Number(process.env.NEXT_PUBLIC_PLAYBACK_SAVE_INTERVAL) ||
+    getDefaultPlaybackSaveInterval(
+      typeof window !== 'undefined'
+        ? (window as any).RUNTIME_CONFIG?.STORAGE_TYPE
+        : 'localstorage'
+    );
+
   useEffect(() => {
     if (config?.SiteConfig) {
       setSiteSettings({
@@ -2296,15 +2316,20 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
         DoubanImageProxyType:
           config.SiteConfig.DoubanImageProxyType || 'direct',
         DoubanImageProxy: config.SiteConfig.DoubanImageProxy || '',
+        BangumiProxy: config.SiteConfig.BangumiProxy || '',
+        BangumiImageProxy:
+          config.SiteConfig.BangumiImageProxy || '',
         DisableYellowFilter: config.SiteConfig.DisableYellowFilter || false,
         TVBoxEnabled: config.SiteConfig.TVBoxEnabled || false,
         TVBoxPassword: config.SiteConfig.TVBoxPassword || '',
         DanmakuApiBaseUrl:
           config.SiteConfig.DanmakuApiBaseUrl ||
           '',
+        PlaybackSaveInterval:
+          config.SiteConfig.PlaybackSaveInterval || defaultSaveInterval,
       });
     }
-  }, [config]);
+  }, [config, defaultSaveInterval]);
 
   // 点击外部区域关闭下拉框
   useEffect(() => {
@@ -2710,6 +2735,72 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
         )}
       </div>
 
+      {/* Bangumi 数据代理 */}
+      <div>
+        <label
+          className={`block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 ${isLocalStorage ? 'opacity-50' : ''
+            }`}
+        >
+          Bangumi 数据代理
+          {isLocalStorage && (
+            <span className='ml-2 text-xs text-gray-500 dark:text-gray-400'>
+              (本地存储下请通过环境变量 NEXT_PUBLIC_BANGUMI_PROXY 修改)
+            </span>
+          )}
+        </label>
+        <input
+          type='text'
+          placeholder='例如: https://bgmapi.example.com'
+          value={siteSettings.BangumiProxy || ''}
+          onChange={(e) =>
+            !isLocalStorage &&
+            setSiteSettings((prev) => ({
+              ...prev,
+              BangumiProxy: e.target.value,
+            }))
+          }
+          disabled={isLocalStorage}
+          className={`w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 ${isLocalStorage ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          设置 Bangumi API 代理地址，留空则使用官方 API（由后端代理请求，前端不直接访问）
+        </p>
+      </div>
+
+      {/* Bangumi 图片代理 */}
+      <div>
+        <label
+          className={`block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 ${isLocalStorage ? 'opacity-50' : ''
+            }`}
+        >
+          Bangumi 图片代理
+          {isLocalStorage && (
+            <span className='ml-2 text-xs text-gray-500 dark:text-gray-400'>
+              (本地存储下请通过环境变量 NEXT_PUBLIC_BANGUMI_IMAGE_PROXY 修改)
+            </span>
+          )}
+        </label>
+        <input
+          type='text'
+          placeholder='例如: https://bgmimg.example.com'
+          value={siteSettings.BangumiImageProxy || ''}
+          onChange={(e) =>
+            !isLocalStorage &&
+            setSiteSettings((prev) => ({
+              ...prev,
+              BangumiImageProxy: e.target.value,
+            }))
+          }
+          disabled={isLocalStorage}
+          className={`w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 ${isLocalStorage ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          设置 Bangumi 图片代理域名，用于替换 lain.bgm.tv 图片地址
+        </p>
+      </div>
+
       {/* 搜索接口可拉取最大页数 */}
       <div>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
@@ -2746,6 +2837,32 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
           }
           className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
         />
+      </div>
+
+      {/* 播放进度自动保存间隔 */}
+      <div>
+        <div className='flex items-center justify-between'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            播放进度自动保存间隔（秒）
+          </label>
+        </div>
+        <input
+          type='number'
+          min={5}
+          max={300}
+          step={1}
+          value={siteSettings.PlaybackSaveInterval}
+          onChange={(e) =>
+            setSiteSettings((prev) => ({
+              ...prev,
+              PlaybackSaveInterval: Number(e.target.value),
+            }))
+          }
+          className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          控制播放过程中每隔多少秒自动保存一次播放进度。数值越小进度保存越精确，但会带来更多接口请求与数据库写入；建议范围 5 ~ 60 秒（Upstash 等按量计费的存储建议 ≥ 20 秒）。默认值按存储类型给出（Upstash 20 秒，其余 5 秒）。
+        </p>
       </div>
 
       {/* 禁用黄色过滤器 */}
@@ -3044,10 +3161,13 @@ function AdminPageClient() {
     return (
       <PageLayout activePath='/admin'>
         <div className='px-2 sm:px-10 py-4 sm:py-8'>
-          <div className='max-w-[95%] mx-auto'>
-            <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-8'>
-              管理员设置
-            </h1>
+        <div className='max-w-[95%] mx-auto'>
+          <div className='mb-6'>
+            <BackButton showLabel />
+          </div>
+          <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-8'>
+            管理员设置
+          </h1>
             <div className='space-y-4'>
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
@@ -3071,8 +3191,9 @@ function AdminPageClient() {
     <PageLayout activePath='/admin'>
       <div className='px-2 sm:px-10 py-4 sm:py-8'>
         <div className='max-w-[95%] mx-auto'>
-          {/* 标题 + 重置配置按钮 */}
+          {/* 返回 + 标题 + 重置配置按钮 */}
           <div className='flex items-center gap-2 mb-8'>
+            <BackButton showLabel />
             <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100'>
               管理员设置
             </h1>
