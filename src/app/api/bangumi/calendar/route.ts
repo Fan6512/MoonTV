@@ -32,14 +32,19 @@ function replaceImageUrl(
   data: BangumiCalendarData[],
   imageProxy: string
 ): BangumiCalendarData[] {
-  if (!imageProxy) return data;
+  // 无论是否配置图片代理，都要剔除 images 为 null 的条目：
+  // Bangumi 的日历里确实存在没有封面的番剧（如 id 498559「Electro Andes」），
+  // 原实现只在配置了代理时才过滤，未配代理时会把 null 原样下发给前端，
+  // 前端 `anime.images.large` 直接抛 TypeError，整页白屏。
   return data.map((day) => ({
     ...day,
     items: (day.items || [])
-      .filter((item) => item.images)
+      .filter((item) => item && item.images)
       .map((item) => {
         const replace = (url: string) =>
-          url.replace('https://lain.bgm.tv', imageProxy);
+          typeof url === 'string' && imageProxy
+            ? url.replace('https://lain.bgm.tv', imageProxy)
+            : url || '';
         return {
           ...item,
           images: {

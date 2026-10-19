@@ -278,18 +278,23 @@ function DoubanPageClient() {
           data = {
             code: 200,
             message: 'success',
-            list: weekdayData.items.map((item) => ({
-              id: item.id?.toString() || '',
-              title: item.name_cn || item.name,
-              poster:
-                item.images.large ||
-                item.images.common ||
-                item.images.medium ||
-                item.images.small ||
-                item.images.grid,
-              rate: item.rating?.score?.toString() || '',
-              year: item.air_date?.split('-')?.[0] || '',
-            })),
+            list: weekdayData.items
+              .map((item) => ({
+                id: item.id?.toString() || '',
+                title: item.name_cn || item.name,
+                // Bangumi 日历存在 images 为 null 的条目，未配图片代理时接口会原样下发，
+                // 直接取 images.large 会抛 TypeError，这里兜底为空字符串。
+                poster:
+                  item.images?.large ||
+                  item.images?.common ||
+                  item.images?.medium ||
+                  item.images?.small ||
+                  item.images?.grid ||
+                  '',
+                rate: item.rating?.score?.toString() || '',
+                year: item.air_date?.split('-')?.[0] || '',
+              }))
+              .filter((item) => item.poster),
           };
         } else {
           throw new Error('没有找到对应的日期');

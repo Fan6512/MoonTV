@@ -7,16 +7,18 @@ export interface BangumiCalendarData {
     id: number;
     name: string;
     name_cn: string;
-    rating: {
-      score: number;
+    // 以下字段在 Bangumi 真实数据里都可能缺失：
+    // 例如 id 498559「Electro Andes」整条没有 images，rating / air_date 也并非必有。
+    rating?: {
+      score?: number;
     };
-    air_date: string;
-    images: {
-      large: string;
-      common: string;
-      medium: string;
-      small: string;
-      grid: string;
+    air_date?: string;
+    images?: {
+      large?: string;
+      common?: string;
+      medium?: string;
+      small?: string;
+      grid?: string;
     };
   }[];
 }
