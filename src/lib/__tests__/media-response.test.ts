@@ -4,11 +4,11 @@ import { ReadableStream as NodeReadableStream } from 'node:stream/web';
 
 import {
   createProxySignal,
-  createSizeLimitedStream,
   exceedsMaxBytes,
   IMAGE_PROXY_TIMEOUT_MS,
   isAllowedImageContentType,
   MAX_PROXIED_IMAGE_BYTES,
+  readBoundedBody,
 } from '../media-response';
 
 // jest 的 vm 环境不会注入 Node 22 的 Web Streams 全局，显式挂上内置实现。
@@ -22,16 +22,6 @@ function chunksToStream(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
-}
-
-async function collect(stream: ReadableStream<Uint8Array>): Promise<number> {
-  const reader = stream.getReader();
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return total;
-    total += value.byteLength;
-  }
 }
 
 describe('isAllowedImageContentType', () => {
@@ -79,23 +69,67 @@ describe('exceedsMaxBytes', () => {
   });
 });
 
-describe('createSizeLimitedStream', () => {
-  it('未超限时完整转发所有字节', async () => {
-    const stream = createSizeLimitedStream(
+describe('readBoundedBody', () => {
+  it('未超限时合并所有 chunk，返回准确字节数', async () => {
+    const result = await readBoundedBody(
       chunksToStream([new Uint8Array(4), new Uint8Array(6), new Uint8Array(2)]),
       100
     );
-    await expect(collect(stream)).resolves.toBe(12);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.byteLength).toBe(12);
+    expect(result.bytes.byteLength).toBe(12);
   });
 
-  it('累计超限后切断上游并让下游流报错', async () => {
-    const stream = createSizeLimitedStream(
-      chunksToStream([new Uint8Array(6), new Uint8Array(6)]),
+  it('单个 chunk 直接复用，不额外分配内存', async () => {
+    const chunk = new Uint8Array(7);
+    const result = await readBoundedBody(chunksToStream([chunk]), 100);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bytes).toBe(chunk);
+  });
+
+  it('字节数恰好等于上限时仍放行', async () => {
+    const result = await readBoundedBody(
+      chunksToStream([new Uint8Array(10)]),
       10
     );
-    await expect(collect(stream)).rejects.toThrow(
-      'proxied image exceeds size limit'
-    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('无 Content-Length 且累计超限时取消上游并返回 too-large', async () => {
+    let canceled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(6));
+        controller.enqueue(new Uint8Array(6));
+        // 故意不 close，模拟仍在传输的大图
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    const result = await readBoundedBody(stream, 10);
+
+    expect(result).toEqual({ ok: false, reason: 'too-large' });
+    expect(canceled).toBe(true);
+  });
+
+  it('读取中途被 abort（超时 / 客户端断开）时取消上游并原样抛出', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('aborted'));
+      },
+    });
+
+    await expect(readBoundedBody(stream)).rejects.toThrow('aborted');
+  });
+
+  it('默认上限为 8MB', () => {
+    expect(MAX_PROXIED_IMAGE_BYTES).toBe(8 * 1024 * 1024);
   });
 });
 
@@ -131,6 +165,24 @@ describe('createProxySignal', () => {
     jest.advanceTimersByTime(IMAGE_PROXY_TIMEOUT_MS);
     expect(proxy.signal.aborted).toBe(true);
     proxy.releaseTimeout();
+  });
+
+  it('超时触发后 timedOut 为 true，客户端取消不会误判成超时', () => {
+    jest.useFakeTimers();
+    const timeout = createProxySignal(undefined, 1000);
+    jest.advanceTimersByTime(1000);
+
+    expect(timeout.timedOut).toBe(true);
+    expect(timeout.signal.aborted).toBe(true);
+    timeout.releaseTimeout();
+
+    const controller = new AbortController();
+    const client = createProxySignal(controller.signal, 1000);
+    controller.abort();
+
+    expect(client.timedOut).toBe(false);
+    expect(client.signal.aborted).toBe(true);
+    client.releaseTimeout();
   });
 
   it('releaseTimeout 后不再因超时取消，但客户端取消仍有效', () => {

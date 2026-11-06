@@ -1,12 +1,12 @@
 /**
- * 媒体代理主机白名单回归测试（Batch 0）。
+ * 媒体代理主机白名单 + 重定向逐跳校验回归测试（Batch 0 / PR #2 复审补充）。
  *
  * 修复前图片与视频共用一份 `M3U8_PROXY_ALLOW_HOSTS`，生产上要么误拦截
  * 图片域名，要么只能放行全部。现在图片代理读 `IMAGE_PROXY_ALLOW_HOSTS`，
  * 未配置时回退到视频白名单，保持向后兼容。
  */
 
-import { validateMediaUrl } from '../url-guard';
+import { fetchMediaUrl, validateMediaUrl } from '../url-guard';
 
 const IMAGE_ENV = 'IMAGE_PROXY_ALLOW_HOSTS';
 const VIDEO_ENV = 'M3U8_PROXY_ALLOW_HOSTS';
@@ -118,5 +118,65 @@ describe('图片与视频白名单分离', () => {
     expect(
       validateMediaUrl('https://extra.test/a.m3u8', ['extra.test'], 'video').ok
     ).toBe(true);
+  });
+});
+
+describe('fetchMediaUrl 重定向逐跳校验', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function redirectResponse(location: string) {
+    return {
+      status: 302,
+      headers: { get: () => location },
+      body: { cancel: async () => undefined },
+    } as unknown as Response;
+  }
+
+  it('重定向到内网 / 元数据地址时拒绝，且不会发出第二跳请求', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(redirectResponse('http://169.254.169.254/latest'));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      fetchMediaUrl('https://img.example.com/a.jpg', {}, 'image')
+    ).rejects.toThrow('不允许访问该地址');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('合法重定向会跟随，且每一跳都用 manual 重新校验', async () => {
+    const finalResponse = { status: 200 } as Response;
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(redirectResponse('https://cdn.example.com/a.jpg'))
+      .mockResolvedValueOnce(finalResponse);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchMediaUrl(
+      'https://img.example.com/a.jpg',
+      {},
+      'image'
+    );
+
+    expect(result.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+    expect(fetchMock.mock.calls[1][0]).toBe('https://cdn.example.com/a.jpg');
+  });
+
+  it('超过 5 跳重定向后抛错，避免无限回源', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(redirectResponse('https://cdn.example.com/next.jpg'));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      fetchMediaUrl('https://img.example.com/a.jpg', {}, 'image')
+    ).rejects.toThrow('Too many media redirects');
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 });

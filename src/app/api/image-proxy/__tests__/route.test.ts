@@ -2,15 +2,22 @@
 
 import { ReadableStream as NodeReadableStream } from 'node:stream/web';
 
+import {
+  IMAGE_PROXY_TIMEOUT_MS,
+  MAX_PROXIED_IMAGE_BYTES,
+} from '@/lib/media-response';
 import { fetchMediaUrl, validateMediaUrl } from '@/lib/url-guard';
 
 import { GET } from '../route';
 
 /**
- * `/api/image-proxy` 安全约束接线测试（Batch 0）。
+ * `/api/image-proxy` 安全与流式边界接线测试（Batch 0 + PR #2 复审补充）。
  *
- * jsdom / jest 的 node 环境都不注入 Web 全局，这里用 node:stream/web 提供
- * ReadableStream，并用极简的 Headers / Response 替身承接路由返回值。
+ * jest 环境不注入 Web 全局，这里用 node:stream/web 的 ReadableStream
+ * 以及极简 Headers / Response 替身承接路由返回值。
+ *
+ * 覆盖复审要求的四类场景：慢速流超时、无 Content-Length 的超限流、
+ * 客户端断开、以及成功/失败响应的 CDN 缓存头。
  */
 
 class FakeHeaders {
@@ -40,10 +47,16 @@ Object.assign(globalThis, {
 
 jest.mock('next/server', () => ({
   NextResponse: {
-    json: jest.fn((body: unknown, init?: { status?: number }) => ({
-      status: init?.status ?? 200,
-      body,
-    })),
+    json: jest.fn(
+      (
+        body: unknown,
+        init?: { status?: number; headers?: Record<string, string> }
+      ) => ({
+        status: init?.status ?? 200,
+        body,
+        headers: init?.headers ?? {},
+      })
+    ),
   },
 }));
 
@@ -52,16 +65,31 @@ jest.mock('@/lib/url-guard', () => ({
   fetchMediaUrl: jest.fn(),
 }));
 
-interface FakeJsonResponse {
+interface JsonResponse {
   status: number;
   body: { error: string };
+  headers: Record<string, string>;
 }
 
-function makeRequest(query: string) {
+function makeRequest(query: string, signal?: AbortSignal) {
   return {
     url: `https://example.com/api/image-proxy${query}`,
-    signal: undefined,
+    signal,
   } as unknown as Request;
+}
+
+const IMG_QUERY = '?url=https%3A%2F%2Fimg.example.com%2Fa.png';
+
+interface UpstreamOptions {
+  contentType?: string | null;
+  contentLength?: string | null;
+  ok?: boolean;
+  status?: number;
+  statusText?: string;
+  chunks?: Uint8Array[];
+  signal?: AbortSignal;
+  /** 只挂起不产出字节，直到 signal 被 abort（模拟慢速无界流） */
+  stall?: boolean;
 }
 
 function makeUpstream({
@@ -69,23 +97,33 @@ function makeUpstream({
   contentLength = '4',
   ok = true,
   status = 200,
-}: {
-  contentType?: string | null;
-  contentLength?: string | null;
-  ok?: boolean;
-  status?: number;
-} = {}) {
+  statusText = 'OK',
+  chunks = [new Uint8Array(4)],
+  signal,
+  stall = false,
+}: UpstreamOptions = {}) {
   let canceled = false;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new Uint8Array(4));
+      if (stall) {
+        signal?.addEventListener(
+          'abort',
+          () => controller.error(new Error('aborted')),
+          { once: true }
+        );
+        return;
+      }
+      chunks.forEach((chunk) => controller.enqueue(chunk));
       controller.close();
+    },
+    cancel() {
+      canceled = true;
     },
   });
   return {
     ok,
     status,
-    statusText: 'OK',
+    statusText,
     headers: {
       get: (key: string) => {
         if (key === 'content-type') return contentType;
@@ -93,37 +131,46 @@ function makeUpstream({
         return null;
       },
     },
-    body: {
-      getReader: () => body.getReader(),
-      cancel: async () => {
-        canceled = true;
-      },
-    },
+    body,
     get canceled() {
       return canceled;
     },
   };
 }
 
+async function flush(times = 8): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+function expectNoStore(res: JsonResponse) {
+  expect(res.headers['Cache-Control']).toBe('no-store');
+  expect(res.headers['CDN-Cache-Control']).toBe('no-store');
+  expect(res.headers['Vercel-CDN-Cache-Control']).toBe('no-store');
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useFakeTimers();
   (validateMediaUrl as jest.Mock).mockReturnValue({ ok: true });
+  (fetchMediaUrl as jest.Mock).mockResolvedValue(makeUpstream());
 });
 
 afterEach(() => {
   jest.useRealTimers();
 });
 
-describe('参数与 SSRF 防护', () => {
-  it('缺少 url 参数返回 400', async () => {
-    const res = (await GET(makeRequest(''))) as unknown as FakeJsonResponse;
+describe('参数、SSRF 与白名单隔离', () => {
+  it('缺少 url 参数返回 400 且错误响应 no-store', async () => {
+    const res = (await GET(makeRequest(''))) as unknown as JsonResponse;
 
     expect(res.status).toBe(400);
+    expectNoStore(res);
     expect(fetchMediaUrl).not.toHaveBeenCalled();
   });
 
-  it('URL 校验不通过返回 403', async () => {
+  it('URL 校验不通过返回 403，且使用图片白名单 scope', async () => {
     (validateMediaUrl as jest.Mock).mockReturnValue({
       ok: false,
       reason: '不允许访问该地址',
@@ -131,10 +178,39 @@ describe('参数与 SSRF 防护', () => {
 
     const res = (await GET(
       makeRequest('?url=http%3A%2F%2F127.0.0.1%2Fa.jpg')
-    )) as unknown as FakeJsonResponse;
+    )) as unknown as JsonResponse;
 
     expect(res.status).toBe(403);
+    expectNoStore(res);
+    expect(validateMediaUrl).toHaveBeenCalledWith(
+      'http://127.0.0.1/a.jpg',
+      undefined,
+      'image'
+    );
     expect(fetchMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it('回源请求也带 image scope，重定向逐跳校验由 url-guard 负责', async () => {
+    await GET(makeRequest(IMG_QUERY));
+
+    const call = (fetchMediaUrl as jest.Mock).mock.calls[0];
+    expect(call[2]).toBe('image');
+    expect(call[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('上游返回非 2xx 时透传状态并取消响应体', async () => {
+    const upstream = makeUpstream({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+    });
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(upstream);
+
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
+
+    expect(res.status).toBe(404);
+    expectNoStore(res);
+    expect(upstream.canceled).toBe(true);
   });
 });
 
@@ -143,12 +219,11 @@ describe('响应类型与体积约束', () => {
     const upstream = makeUpstream({ contentType: 'image/svg+xml' });
     (fetchMediaUrl as jest.Mock).mockResolvedValue(upstream);
 
-    const res = (await GET(
-      makeRequest('?url=https%3A%2F%2Fimg.example.com%2Fa.svg')
-    )) as unknown as FakeJsonResponse;
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
 
     expect(res.status).toBe(415);
     expect(res.body.error).toContain('Not an allowed image response');
+    expectNoStore(res);
     expect(upstream.canceled).toBe(true);
   });
 
@@ -157,48 +232,114 @@ describe('响应类型与体积约束', () => {
       makeUpstream({ contentType: 'text/html' })
     );
 
-    const res = (await GET(
-      makeRequest('?url=https%3A%2F%2Fimg.example.com%2Fa')
-    )) as unknown as FakeJsonResponse;
-
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
     expect(res.status).toBe(415);
   });
 
   it('Content-Length 声明超限时返回 413，不拉取响应体', async () => {
-    const upstream = makeUpstream({ contentLength: String(9 * 1024 * 1024) });
+    const upstream = makeUpstream({
+      contentLength: String(MAX_PROXIED_IMAGE_BYTES + 1),
+    });
     (fetchMediaUrl as jest.Mock).mockResolvedValue(upstream);
 
-    const res = (await GET(
-      makeRequest('?url=https%3A%2F%2Fimg.example.com%2Fbig.png')
-    )) as unknown as FakeJsonResponse;
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
 
     expect(res.status).toBe(413);
+    expectNoStore(res);
     expect(upstream.canceled).toBe(true);
   });
 
-  it('正常位图返回 200，带 nosniff 且使用受限流', async () => {
-    (fetchMediaUrl as jest.Mock).mockResolvedValue(makeUpstream());
+  it('无 Content-Length 且实际超限：在发出 200 之前就返回 413', async () => {
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(
+      makeUpstream({
+        contentLength: null,
+        chunks: [new Uint8Array(MAX_PROXIED_IMAGE_BYTES + 1)],
+      })
+    );
 
-    const res = (await GET(
-      makeRequest('?url=https%3A%2F%2Fimg.example.com%2Fa.png')
-    )) as unknown as FakeResponse;
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toBe('Image too large');
+    expectNoStore(res);
+  });
+
+  it('无 Content-Length 但分块累计超限同样返回 413', async () => {
+    const half = MAX_PROXIED_IMAGE_BYTES / 2 + 1;
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(
+      makeUpstream({
+        contentLength: null,
+        chunks: [new Uint8Array(half), new Uint8Array(half)],
+      })
+    );
+
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
+    expect(res.status).toBe(413);
+  });
+});
+
+describe('慢速流、客户端断开与 CDN 缓存边界', () => {
+  it('慢速流触发 15s 超时后返回 504（img onError 可回退占位图）', async () => {
+    (fetchMediaUrl as jest.Mock).mockImplementation(async (_url, options) =>
+      makeUpstream({ signal: options.signal, stall: true })
+    );
+
+    const pending = GET(makeRequest(IMG_QUERY));
+    await flush();
+    jest.advanceTimersByTime(IMAGE_PROXY_TIMEOUT_MS);
+    await flush();
+    const res = (await pending) as unknown as JsonResponse;
+
+    expect(res.status).toBe(504);
+    expect(res.body.error).toBe('Upstream image timed out');
+    expectNoStore(res);
+  });
+
+  it('客户端断开返回 499，不留可被共享缓存的响应', async () => {
+    const controller = new AbortController();
+    (fetchMediaUrl as jest.Mock).mockImplementation(async (_url, options) =>
+      makeUpstream({ signal: options.signal, stall: true })
+    );
+
+    const pending = GET(makeRequest(IMG_QUERY, controller.signal));
+    await flush();
+    controller.abort();
+    await flush();
+    const res = (await pending) as unknown as JsonResponse;
+
+    expect(res.status).toBe(499);
+    expectNoStore(res);
+  });
+
+  it('成功响应是完整字节、带准确 Content-Length 才可长期共享缓存', async () => {
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(
+      makeUpstream({
+        contentLength: null,
+        chunks: [new Uint8Array(3), new Uint8Array(4)],
+      })
+    );
+
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as FakeResponse;
 
     expect(res).toBeInstanceOf(FakeResponse);
     expect(res.init.status).toBe(200);
     expect(res.init.headers.get('Content-Type')).toBe('image/png');
     expect(res.init.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(res.body).toBeDefined();
+    expect(res.init.headers.get('Content-Length')).toBe('7');
+    expect((res.body as Uint8Array).byteLength).toBe(
+      Number(res.init.headers.get('Content-Length'))
+    );
+    expect(res.init.headers.get('Cache-Control')).toContain('s-maxage');
+    expect(res.init.headers.get('CDN-Cache-Control')).toContain('s-maxage');
   });
 
-  it('把客户端取消与超时合并后的 signal 传给上游', async () => {
-    (fetchMediaUrl as jest.Mock).mockResolvedValue(makeUpstream());
+  it('上游响应没有 body 时返回 500 且 no-store', async () => {
+    const upstream = makeUpstream();
+    Object.defineProperty(upstream, 'body', { value: null });
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(upstream);
 
-    await GET(makeRequest('?url=https%3A%2F%2Fimg.example.com%2Fa.png'));
-
-    const options = (fetchMediaUrl as jest.Mock).mock.calls[0][1] as {
-      signal: AbortSignal;
-    };
-    expect(options.signal).toBeInstanceOf(AbortSignal);
-    expect(options.signal.aborted).toBe(false);
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
+    expect(res.status).toBe(500);
+    expectNoStore(res);
   });
 });
