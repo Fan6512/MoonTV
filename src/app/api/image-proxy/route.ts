@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 
+import {
+  createProxySignal,
+  createSizeLimitedStream,
+  exceedsMaxBytes,
+  IMAGE_PROXY_TIMEOUT_MS,
+  isAllowedImageContentType,
+} from '@/lib/media-response';
 import { fetchMediaUrl, validateMediaUrl } from '@/lib/url-guard';
 
 export const runtime = 'edge';
@@ -13,22 +20,32 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
   }
 
-  const guard = validateMediaUrl(imageUrl);
+  // 图片代理使用独立的白名单（未配置时回退到视频白名单）
+  const guard = validateMediaUrl(imageUrl, undefined, 'image');
   if (!guard.ok) {
     return NextResponse.json({ error: guard.reason }, { status: 403 });
   }
 
   try {
-    const imageResponse = await fetchMediaUrl(imageUrl, {
-      signal: request.signal,
-      headers: {
-        Referer: 'https://movie.douban.com/',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    const { signal } = createProxySignal(
+      request.signal,
+      IMAGE_PROXY_TIMEOUT_MS
+    );
+    const imageResponse = await fetchMediaUrl(
+      imageUrl,
+      {
+        signal,
+        headers: {
+          Referer: 'https://movie.douban.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        },
       },
-    });
+      'image'
+    );
 
     if (!imageResponse.ok) {
+      await imageResponse.body?.cancel();
       return NextResponse.json(
         { error: imageResponse.statusText },
         { status: imageResponse.status }
@@ -37,12 +54,20 @@ export async function GET(request: Request) {
 
     const contentType = imageResponse.headers.get('content-type');
 
-    if (!contentType?.toLowerCase().startsWith('image/')) {
+    // 默认拒绝 SVG 等 XML 图片：作为独立文档打开时可携带脚本，
+    // 经同源代理后会带上站点源的权限，nosniff 不足以消除风险。
+    if (!isAllowedImageContentType(contentType)) {
       await imageResponse.body?.cancel();
       return NextResponse.json(
-        { error: 'Not an image response' },
+        { error: 'Not an allowed image response' },
         { status: 415 }
       );
+    }
+
+    // 声明已超限就别拉流；没有 Content-Length 时由下面的流式计数兜底。
+    if (exceedsMaxBytes(imageResponse.headers.get('content-length'))) {
+      await imageResponse.body?.cancel();
+      return NextResponse.json({ error: 'Image too large' }, { status: 413 });
     }
 
     if (!imageResponse.body) {
@@ -54,9 +79,7 @@ export async function GET(request: Request) {
 
     // 创建响应头
     const headers = new Headers();
-    if (contentType) {
-      headers.set('Content-Type', contentType);
-    }
+    headers.set('Content-Type', contentType || 'image/jpeg');
     headers.set('X-Content-Type-Options', 'nosniff');
 
     // 设置缓存头（可选）
@@ -65,8 +88,8 @@ export async function GET(request: Request) {
     headers.set('Vercel-CDN-Cache-Control', 'public, s-maxage=15720000');
     headers.set('Netlify-Vary', 'query');
 
-    // 直接返回图片流
-    return new Response(imageResponse.body, {
+    // 逐块转发并累计字节数，超限立即切断上游，避免无界流吃满带宽
+    return new Response(createSizeLimitedStream(imageResponse.body), {
       status: 200,
       headers,
     });

@@ -6,8 +6,9 @@
  *
  *  1. 协议白名单：仅允许 http / https
  *  2. 内网网段黑名单：loopback / 私有段 / 链路本地 / 云元数据地址
- *  3. 可选主机白名单：通过环境变量 `M3U8_PROXY_ALLOW_HOSTS` 配置（逗号分隔，
- *     支持 `*.example.com` 通配）。未配置时不做主机限制，保持向后兼容。
+ *  3. 可选主机白名单：视频代理读 `M3U8_PROXY_ALLOW_HOSTS`，图片代理读
+ *     `IMAGE_PROXY_ALLOW_HOSTS`（未配置时回退到视频白名单，保持向后兼容；
+ *     支持 `*.example.com` 通配）。两者都未配置时不做主机限制。
  *
  * 纯函数、无运行时依赖，可用于 edge runtime。
  */
@@ -51,15 +52,23 @@ export function isBlockedHost(hostname: string): boolean {
   return PRIVATE_HOST_PATTERNS.some((pattern) => pattern.test(host));
 }
 
-function readAllowHosts(): string[] {
+function readAllowHosts(envName: string): string[] {
   const raw =
-    typeof process !== 'undefined'
-      ? process.env?.M3U8_PROXY_ALLOW_HOSTS || ''
-      : '';
+    typeof process !== 'undefined' ? process.env?.[envName] || '' : '';
   return raw
     .split(',')
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+}
+
+/** 图片与视频代理各自使用一份白名单，避免互相误拦截 */
+export type MediaUrlPurpose = 'image' | 'video';
+
+function resolveAllowHosts(purpose: MediaUrlPurpose): string[] {
+  const videoAllow = readAllowHosts('M3U8_PROXY_ALLOW_HOSTS');
+  if (purpose === 'video') return videoAllow;
+  const imageAllow = readAllowHosts('IMAGE_PROXY_ALLOW_HOSTS');
+  return imageAllow.length > 0 ? imageAllow : videoAllow;
 }
 
 function matchesAllowList(hostname: string, allowHosts: string[]): boolean {
@@ -83,10 +92,12 @@ export interface UrlGuardResult {
  *
  * @param raw 用户传入的原始地址
  * @param extraAllowHosts 额外允许的主机（如从站点配置读取的源站域名）
+ * @param purpose 代理用途，决定读取哪一份主机白名单
  */
 export function validateMediaUrl(
   raw: unknown,
-  extraAllowHosts?: Iterable<string>
+  extraAllowHosts?: Iterable<string>,
+  purpose: MediaUrlPurpose = 'video'
 ): UrlGuardResult {
   if (typeof raw !== 'string' || raw.length === 0) {
     return { ok: false, reason: '缺少 URL 参数' };
@@ -114,7 +125,7 @@ export function validateMediaUrl(
     return { ok: false, reason: '不允许访问该地址' };
   }
 
-  const allowHosts = readAllowHosts();
+  const allowHosts = resolveAllowHosts(purpose);
   const extra = extraAllowHosts ? Array.from(extraAllowHosts) : [];
   const effectiveAllow = allowHosts.concat(
     extra.map((item) => item.trim().toLowerCase()).filter(Boolean)
@@ -133,11 +144,12 @@ export function validateMediaUrl(
 /** Validate each redirect target before sending another upstream request. */
 export async function fetchMediaUrl(
   raw: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  purpose: MediaUrlPurpose = 'video'
 ): Promise<Response> {
   let url = raw;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const guard = validateMediaUrl(url);
+    const guard = validateMediaUrl(url, undefined, purpose);
     if (!guard.ok) throw new Error(guard.reason || 'Media URL blocked');
     const response = await fetch(url, { ...options, redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
