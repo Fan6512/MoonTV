@@ -8,7 +8,25 @@ import { getDetailFromApi, searchFromApiStream } from '@/lib/downstream';
 
 export const runtime = 'edge';
 
-function buildCacheHeaders(cacheTime: number) {
+/**
+ * 详情响应的缓存策略。
+ *
+ * 本地存储模式没有用户组概念，响应只由 URL 决定，可以走共享缓存。
+ * 其它存储模式下响应取决于请求者所属的组（可用源不同），必须禁止共享缓存，
+ * 否则受限用户可以直接命中 CDN 上由其它组用户产生的缓存，绕过源权限。
+ */
+function buildCacheHeaders(
+  cacheTime: number,
+  shareable = true
+): Record<string, string> {
+  if (!shareable) {
+    return {
+      'Cache-Control': `private, max-age=${cacheTime}`,
+      Vary: 'Cookie',
+      'CDN-Cache-Control': 'private, no-store',
+      'Vercel-CDN-Cache-Control': 'private, no-store',
+    };
+  }
   return {
     'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
     'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
@@ -85,17 +103,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: '无效的视频ID格式' }, { status: 400 });
   }
 
-  // fields=desc 会触发搜索，非本地存储模式下要求登录（与 /api/search/one 一致）
+  // 非本地存储模式下，所有详情路径都必须带上已由 middleware 验签的用户名。
+  // getAvailableApiSites(undefined) 会返回全量未禁用源，之前只有 fields=desc
+  // 分支取用户名，完整详情请求会因此绕过用户组的源权限。
+  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  const shareableCache = storageType === 'localstorage';
   let username: string | undefined;
-  if (descOnly) {
-    const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-    if (storageType !== 'localstorage') {
-      const auth = getAuthInfoFromCookie(request);
-      if (!auth || !auth.username) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      username = auth.username;
+  if (!shareableCache) {
+    const auth = getAuthInfoFromCookie(request);
+    if (!auth || !auth.username) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    username = auth.username;
   }
 
   try {
@@ -151,13 +170,13 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json(
         { desc },
-        { headers: buildCacheHeaders(cacheTime) }
+        { headers: buildCacheHeaders(cacheTime, shareableCache) }
       );
     }
 
     const result = await getDetailFromApi(apiSite, id);
     return NextResponse.json(result, {
-      headers: buildCacheHeaders(cacheTime),
+      headers: buildCacheHeaders(cacheTime, shareableCache),
     });
   } catch (error) {
     return NextResponse.json(
