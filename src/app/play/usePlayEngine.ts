@@ -10,6 +10,7 @@ import {
   setSettingTooltip,
   updateSettingPreservingPanel,
 } from '@/lib/artplayer-setting';
+import { AutoSourceSwitchState } from '@/lib/auto-source-switch';
 import { getSearchConcurrency } from '@/lib/concurrency';
 import {
   AnimeOption,
@@ -114,14 +115,6 @@ declare global {
     hls?: any;
   }
 }
-
-/**
- * 同一集内最多自动换源次数（P1-5）。
- *
- * 换满仍未成功就停下来提示用户手动选源：如果所有源都挂了，
- * 无上限的自动换源只会把候选列表扫成死循环（A→B→C→A...）。
- */
-const MAX_AUTO_SOURCE_SWITCHES = 3;
 
 /**
  * seek 之后这段时间内的 `waiting` 不计入「网络卡顿」（毫秒）。
@@ -560,8 +553,8 @@ export function usePlayEngine() {
     videoYear,
   ]);
 
-  // 切集/换片时清空"已试过的源"与"自动换源次数"：
-  // 某个源只是这一集挂了，不代表下一集也挂，不该把惩罚带到下一集。
+  // 切集/换片/换源时终止旧预取、按策略清理缓存、作废下一集预热队列。
+  // 注意：自动换源状态机不在这里重置——见 autoSwitchStateRef 的说明。
   useEffect(() => {
     const previous = previousCacheEpisodeRef.current;
     const videoKey = `${currentSource}:${currentId}`;
@@ -616,8 +609,6 @@ export function usePlayEngine() {
         }
       });
     }
-    triedSourcesRef.current = new Set();
-    autoSwitchCountRef.current = 0;
     // 切集/换源后"下一集"的目标变了，旧的预热队列立刻作废。
     // 已经落盘的分片不受影响（缓存键与集数无关），不会白费。
     nextWarmupKeyRef.current = null;
@@ -706,10 +697,12 @@ export function usePlayEngine() {
       ) => Promise<void>)
     | null
   >(null);
-  /** 本集内已经尝试过的源（`source:id`），防止自动换源来回横跳 */
-  const triedSourcesRef = useRef<Set<string>>(new Set());
-  /** 本集内已自动换源次数 */
-  const autoSwitchCountRef = useRef<number>(0);
+  /**
+   * 自动换源状态机：只在切集 / 手动换源 / 换片时显式 reset()。
+   * 自动换源自身会改 currentSource / currentId，绝不能挂到监听它们的 effect 上，
+   * 否则计数每次换源都会清零，MAX_AUTO_SOURCE_SWITCHES 形同虚设。
+   */
+  const autoSwitchStateRef = useRef(new AutoSourceSwitchState());
   /** 当前期望的画质高度，null 表示自动 */
   const preferredHeightRef = useRef<number | null>(
     loadPreferredQualityHeight()
@@ -1318,7 +1311,9 @@ export function usePlayEngine() {
 
       setLoadingStage('ready');
       setLoadingMessage('✨ 准备就绪，即将开始播放...');
-      setTimeout(() => setLoading(false), 500);
+      // PlayClient 在 loading 为 true 时只渲染 LoadingView，播放器容器尚不存在；
+      // 详情已就绪还多等 500ms 属于纯串行阻塞，直接放行让首帧提前开始。
+      setLoading(false);
     }
 
     const initAll = async () => {
@@ -1650,11 +1645,10 @@ export function usePlayEngine() {
     options?: { auto?: boolean }
   ) => {
     try {
-      // 用户手动换源时清空自动换源的"已试过"记录与次数；
-      // 自动换源则保留，否则会在 A→B→A 之间反复横跳。
+      // 用户手动换源（含换片）时重置自动换源状态；
+      // 自动换源则保留累计次数与"已试过"集合，否则会在 A→B→A 之间反复横跳。
       if (!options?.auto) {
-        triedSourcesRef.current.clear();
-        autoSwitchCountRef.current = 0;
+        autoSwitchStateRef.current.reset();
       }
 
       // 显示换源加载状态
@@ -1744,39 +1738,31 @@ export function usePlayEngine() {
   /**
    * 当前源被判定为"不可自动恢复"后，自动切到下一个候选源（P1-5）。
    *
-   * 候选来自已搜索到的全部源（`availableSources`，已按优选评分排序），
-   * 依次排除：本集已试过的、没有剧集列表的、集数短于当前集数的
-   * （切过去只能回到第一集，体验反而更差）。
-   *
+   * 候选排除规则与次数累计交给 AutoSourceSwitchState 纯状态机，
+   * 这里只把决策落到 UI 与换源动作上。
    * 只读 ref，因此可以被注册在任意时刻的回调安全调用。
    */
   const autoSwitchSource = (reason: string) => {
-    const currentKey = `${currentSourceRef.current}:${currentIdRef.current}`;
-    triedSourcesRef.current.add(currentKey);
+    const decision = autoSwitchStateRef.current.requestSwitch({
+      currentSource: currentSourceRef.current ?? '',
+      currentId: currentIdRef.current ?? '',
+      candidates: availableSourcesRef.current,
+      episodeIndex: currentEpisodeIndexRef.current,
+    });
 
-    if (autoSwitchCountRef.current >= MAX_AUTO_SOURCE_SWITCHES) {
+    if (decision.kind === 'limit-reached') {
       setError(
-        `播放失败：${reason}。已自动尝试 ${autoSwitchCountRef.current} 个片源仍未成功，请手动切换片源`
+        `播放失败：${reason}。已自动尝试 ${decision.switchCount} 个片源仍未成功，请手动切换片源`
       );
       return;
     }
 
-    const episodeIndex = currentEpisodeIndexRef.current;
-    const candidate = availableSourcesRef.current.find((item) => {
-      const key = `${item.source}:${item.id}`;
-      if (triedSourcesRef.current.has(key)) return false;
-      if (!item.episodes || item.episodes.length === 0) return false;
-      return item.episodes.length > episodeIndex;
-    });
-
-    if (!candidate) {
+    if (decision.kind === 'no-candidate') {
       setError(`播放失败：${reason}。已无可用备用片源，请手动选择`);
       return;
     }
 
-    autoSwitchCountRef.current += 1;
-    triedSourcesRef.current.add(`${candidate.source}:${candidate.id}`);
-
+    const { candidate } = decision;
     const notice = `播放失败，已自动切换到「${candidate.source}」`;
     console.warn(
       `[auto-switch] ${reason} → ${candidate.source}:${candidate.id}`
@@ -1835,6 +1821,8 @@ export function usePlayEngine() {
       } catch {
         resumeTimeRef.current = 0;
       }
+      // 换集是新的播放尝试，重新给满 3 次自动换源机会
+      autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(episodeNumber);
     }
   };
@@ -1851,6 +1839,7 @@ export function usePlayEngine() {
       if (artPlayerRef.current) {
         setCurrentTooltip('');
       }
+      autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(idx - 1);
     }
   };
@@ -1867,6 +1856,7 @@ export function usePlayEngine() {
       if (artPlayerRef.current) {
         setCurrentTooltip('');
       }
+      autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(idx + 1);
     }
   };
