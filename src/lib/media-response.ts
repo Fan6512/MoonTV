@@ -18,15 +18,38 @@ export const IMAGE_PROXY_TIMEOUT_MS = 15_000;
 export const VIDEO_PROXY_TIMEOUT_MS = 30_000;
 
 /**
+ * 明确的位图白名单。
+ *
+ * 旧实现是「放行所有 `image/*`，只排除 `+xml`」——黑名单思路下，任何新出现的
+ * `image/xxx`（以及结构上并不是位图的类型）都会默认放行。同源代理应当用白名单：
+ * 只列浏览器能当作位图解码的常见类型，其余一律 415，未知类型宁可拒绝。
+ */
+const ALLOWED_IMAGE_CONTENT_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg', // 非标准写法，但部分 CDN 仍在用
+  'image/pjpeg', // 老 IE 时代的 JPEG 别名，兼容历史源
+  'image/png',
+  'image/apng',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/bmp',
+  'image/x-ms-bmp',
+  'image/x-icon',
+  'image/vnd.microsoft.icon',
+  'image/heic',
+  'image/heif',
+]);
+
+/**
  * 只允许位图。`image/svg+xml` 及其它 `image/*+xml` 一律拒绝：
  * SVG 作为独立文档打开时可以内嵌脚本，经同源代理后会带上站点源的权限，
  * 即使响应带 `X-Content-Type-Options: nosniff` 也不该默认放行。
  */
 export function isAllowedImageContentType(contentType: string | null): boolean {
   if (!contentType) return false;
-  const normalized = contentType.toLowerCase().split(';')[0].trim();
-  if (!normalized.startsWith('image/')) return false;
-  return !normalized.endsWith('+xml');
+  const normalized = contentType.split(';')[0].trim().toLowerCase();
+  return ALLOWED_IMAGE_CONTENT_TYPES.has(normalized);
 }
 
 /** 声明的响应体已超限则返回 true；缺失或非法 Content-Length 交给流式计数兜底 */
@@ -107,6 +130,11 @@ export type BoundedBodyResult =
  *
  * 超时 / 客户端取消会由 `reader.read()` 抛出，这里取消上游后原样抛出，
  * 交给调用方按 `timedOut` / `request.signal.aborted` 映射成 HTTP 状态码。
+ *
+ * 内存：多 chunk 响应在合并时会短暂同时存在「所有 chunk」与「合并后的 buffer」
+ * 两份数据，峰值接近 2 × 上限（约 16MB，未计运行时额外开销）。常见海报远小于
+ * 8MB，暂不为此改写成预分配；若 Preview 实测 Edge 内存吃紧，再按 Content-Length
+ * 预分配精确 buffer 边读边填。
  */
 export async function readBoundedBody(
   body: ReadableStream<Uint8Array>,

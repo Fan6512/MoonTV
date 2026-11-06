@@ -29,10 +29,21 @@ describe('isAllowedImageContentType', () => {
     [
       'image/png',
       'image/jpeg',
+      'image/jpg',
       'image/webp',
       'image/avif',
       'image/gif',
+      'image/apng',
+      'image/bmp',
+      'image/x-icon',
+      'image/vnd.microsoft.icon',
     ].forEach((type) => expect(isAllowedImageContentType(type)).toBe(true));
+  });
+
+  it('忽略大小写与 charset 参数', () => {
+    expect(isAllowedImageContentType('IMAGE/PNG')).toBe(true);
+    expect(isAllowedImageContentType('image/webp; charset=binary')).toBe(true);
+    expect(isAllowedImageContentType('image/jpeg;charset=UTF-8')).toBe(true);
   });
 
   it('默认拒绝 SVG（含大小写与 charset 变体）', () => {
@@ -44,8 +55,16 @@ describe('isAllowedImageContentType', () => {
     ].forEach((type) => expect(isAllowedImageContentType(type)).toBe(false));
   });
 
+  it('白名单外的 image/* 子类型不再默认放行', () => {
+    // 旧实现是 startsWith('image/') + 排除 +xml，这些都会被放行
+    ['image/tiff', 'image/x-custom-format', 'image/vnd.djvu'].forEach((type) =>
+      expect(isAllowedImageContentType(type)).toBe(false)
+    );
+  });
+
   it('拒绝非图片与缺失的 content-type', () => {
     expect(isAllowedImageContentType('text/html')).toBe(false);
+    expect(isAllowedImageContentType('application/octet-stream')).toBe(false);
     expect(isAllowedImageContentType('application/xml')).toBe(false);
     expect(isAllowedImageContentType(null)).toBe(false);
   });

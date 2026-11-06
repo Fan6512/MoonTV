@@ -236,6 +236,16 @@ describe('响应类型与体积约束', () => {
     expect(res.status).toBe(415);
   });
 
+  it('白名单外的 image/* 子类型同样拒绝', async () => {
+    const upstream = makeUpstream({ contentType: 'image/tiff' });
+    (fetchMediaUrl as jest.Mock).mockResolvedValue(upstream);
+
+    const res = (await GET(makeRequest(IMG_QUERY))) as unknown as JsonResponse;
+
+    expect(res.status).toBe(415);
+    expect(upstream.canceled).toBe(true);
+  });
+
   it('Content-Length 声明超限时返回 413，不拉取响应体', async () => {
     const upstream = makeUpstream({
       contentLength: String(MAX_PROXIED_IMAGE_BYTES + 1),
