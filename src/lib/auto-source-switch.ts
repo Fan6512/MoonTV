@@ -137,6 +137,19 @@ export class SourceSwitchCoordinator {
     return this.inflight && token === this.latestToken;
   }
 
+  /**
+   * 延迟收尾用的「是否仍是最后一次换源」判断（不依赖 `busy`）。
+   *
+   * 不能用 `canCommit()`：正常完成的换源会在 `finally` 里 `finish()`，
+   * 此时锁已释放、`busy` 为 false，但这次换源仍是最新的一次。
+   * 换源尾部 100ms 关闭加载遮罩属于纯收尾动作，需要的是「之后没有更新的
+   * 换源开始过」，而不是「换源仍在进行中」；一旦有新的 `begin()`（手动换源）
+   * 或 `invalidate()`（切集 / 换片），旧 token 立即失效，旧定时器不得再动状态。
+   */
+  isLatest(token: number): boolean {
+    return this.latestToken !== 0 && token === this.latestToken;
+  }
+
   finish(token: number): void {
     if (token !== this.latestToken) return;
     this.inflight = false;

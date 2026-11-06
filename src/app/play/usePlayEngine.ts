@@ -1741,9 +1741,14 @@ export function usePlayEngine() {
       setDetail(newDetail);
       setCurrentEpisodeIndex(targetIndex);
 
-      // 设置一个短暂的延时，确保DOM已更新
+      // 设置一个短暂的延时，确保DOM已更新。
+      // 这里只判断 token 是否仍是最新一次换源：正常完成的换源已经 finish()，
+      // 锁已释放，用 canCommit 判断会永远为 false；而如果 100ms 内又开始了
+      // 新的换源（手动换源 / 切集 invalidate），旧定时器不得关掉新的遮罩。
       setTimeout(() => {
-        setIsVideoLoading(false);
+        if (coordinator.isLatest(token)) {
+          setIsVideoLoading(false);
+        }
       }, 100);
     } catch (err) {
       // 已作废的请求若在此清 loading / 写 error，会覆盖新换源的状态

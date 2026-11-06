@@ -161,6 +161,74 @@ describe('SourceSwitchCoordinator 基础语义', () => {
   });
 });
 
+/**
+ * 换源尾部 100ms 关闭加载遮罩的定时器回归测试。
+ *
+ * `canCommit()` 要求 `inflight` 为真，而正常完成的换源会在 `finally` 里
+ * `finish()`，此时锁已释放。若定时器用 `canCommit()` 判断，旧回调会永远
+ * 被跳过；反过来若不做任何判断，旧回调又会关掉新换源的遮罩。
+ * 正确语义是 `isLatest()`：只看「之后有没有更新的换源」。
+ */
+describe('换源尾部的延迟收尾（100ms 关闭遮罩）', () => {
+  it('正常完成后 isLatest 仍为 true，而 canCommit 已为 false', () => {
+    const c = new SourceSwitchCoordinator();
+    const token = c.begin('auto') as number;
+
+    c.finish(token);
+
+    expect(c.canCommit(token)).toBe(false); // 锁已释放，不能写状态…
+    expect(c.isLatest(token)).toBe(true); // …但仍是最后一次换源，可以收尾
+  });
+
+  it('新换源开始后旧 token 立即失效', () => {
+    const c = new SourceSwitchCoordinator();
+    const oldToken = c.begin('auto') as number;
+    c.finish(oldToken);
+
+    const newToken = c.begin('manual') as number;
+
+    expect(c.isLatest(oldToken)).toBe(false);
+    expect(c.isLatest(newToken)).toBe(true);
+  });
+
+  it('切集 invalidate 后旧定时器失效', () => {
+    const c = new SourceSwitchCoordinator();
+    const token = c.begin('auto') as number;
+    c.finish(token);
+
+    c.invalidate();
+
+    expect(c.isLatest(token)).toBe(false);
+  });
+
+  it('旧定时器不关闭新换源的加载遮罩', () => {
+    const coordinator = new SourceSwitchCoordinator();
+    let loading = false;
+    const pendingTimers: Array<() => void> = [];
+    // 与 handleSourceChange 尾部一致：100ms 后仅在仍是最新换源时收起遮罩
+    const scheduleHide = (token: number) =>
+      pendingTimers.push(() => {
+        if (coordinator.isLatest(token)) loading = false;
+      });
+
+    // 第一次换源完成并排定收尾
+    const first = coordinator.begin('auto') as number;
+    loading = true;
+    coordinator.finish(first);
+    scheduleHide(first);
+
+    // 100ms 内用户手动换源，且新换源已经打开了遮罩
+    const second = coordinator.begin('manual') as number;
+    loading = true;
+    coordinator.finish(second);
+
+    // 旧定时器现在才触发
+    pendingTimers.forEach((fire) => fire());
+
+    expect(loading).toBe(true);
+  });
+});
+
 describe('连续错误事件的异步竞态', () => {
   it('同一轮播放失败连续触发 3 次错误回调，只发起 1 次换源且只消耗 1 次计数', async () => {
     const h = createHarness();
