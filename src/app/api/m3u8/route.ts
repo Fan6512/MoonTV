@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { parseM3U8 } from '@/lib/m3u8-downloader';
+import {
+  createProxySignal,
+  VIDEO_PROXY_TIMEOUT_MS,
+} from '@/lib/media-response';
 import { fetchMediaUrl, validateMediaUrl } from '@/lib/url-guard';
 
 export const runtime = 'edge';
@@ -97,11 +101,18 @@ export async function GET(request: NextRequest) {
           { status: 400 }
         );
       }
-      const response = await fetchMediaUrl(url, {
-        headers: { Range: range, 'Accept-Encoding': 'identity' },
-        signal: request.signal,
-        cache: 'no-store',
-      });
+      const proxy = createProxySignal(request.signal, VIDEO_PROXY_TIMEOUT_MS);
+      const response = await fetchMediaUrl(
+        url,
+        {
+          headers: { Range: range, 'Accept-Encoding': 'identity' },
+          signal: proxy.signal,
+          cache: 'no-store',
+        },
+        'video'
+      );
+      // 响应头已拿到，后续分片传输可能持续较久，只保留客户端取消
+      proxy.releaseTimeout();
       const headers = new Headers({
         'Content-Type':
           response.headers.get('Content-Type') || 'application/octet-stream',
@@ -118,7 +129,13 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const response = await fetchMediaUrl(url, { signal: request.signal });
+    const proxy = createProxySignal(request.signal, VIDEO_PROXY_TIMEOUT_MS);
+    const response = await fetchMediaUrl(
+      url,
+      { signal: proxy.signal },
+      'video'
+    );
+    proxy.releaseTimeout();
 
     return new NextResponse(response.body, {
       status: response.status,
