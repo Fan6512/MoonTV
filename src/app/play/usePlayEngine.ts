@@ -10,7 +10,11 @@ import {
   setSettingTooltip,
   updateSettingPreservingPanel,
 } from '@/lib/artplayer-setting';
-import { AutoSourceSwitchState } from '@/lib/auto-source-switch';
+import {
+  AutoSourceSwitchState,
+  runAutoSwitch,
+  SourceSwitchCoordinator,
+} from '@/lib/auto-source-switch';
 import { getSearchConcurrency } from '@/lib/concurrency';
 import {
   AnimeOption,
@@ -693,7 +697,7 @@ export function usePlayEngine() {
         newSource: string,
         newId: string,
         newTitle: string,
-        options?: { auto?: boolean }
+        options?: { auto?: boolean; token?: number }
       ) => Promise<void>)
     | null
   >(null);
@@ -703,6 +707,11 @@ export function usePlayEngine() {
    * 否则计数每次换源都会清零，MAX_AUTO_SOURCE_SWITCHES 形同虚设。
    */
   const autoSwitchStateRef = useRef(new AutoSourceSwitchState());
+  /**
+   * 换源并发协调器：同一轮自动换源只允许一个异步操作，
+   * 手动换源 / 切集可以抢占并作废旧请求（详见 SourceSwitchCoordinator）。
+   */
+  const sourceSwitchCoordinatorRef = useRef(new SourceSwitchCoordinator());
   /** 当前期望的画质高度，null 表示自动 */
   const preferredHeightRef = useRef<number | null>(
     loadPreferredQualityHeight()
@@ -1642,9 +1651,19 @@ export function usePlayEngine() {
     newSource: string,
     newId: string,
     newTitle: string,
-    options?: { auto?: boolean }
+    options?: { auto?: boolean; token?: number }
   ) => {
+    // runAutoSwitch 已取过锁，这里沿用它的 token；UI 手动换源则自己
+    // begin('manual')，抢占并作废尚未落地的自动换源。
+    const coordinator = sourceSwitchCoordinatorRef.current;
+    const ownsToken = options?.token === undefined;
+    const token = options?.token ?? coordinator.begin('manual');
+    if (token === null) return;
+
     try {
+      // 唤起时若已被手动换源 / 切集作废，直接放弃，连加载态都不要碰。
+      if (!coordinator.canCommit(token)) return;
+
       // 用户手动换源（含换片）时重置自动换源状态；
       // 自动换源则保留累计次数与"已试过"集合，否则会在 A→B→A 之间反复横跳。
       if (!options?.auto) {
@@ -1671,6 +1690,10 @@ export function usePlayEngine() {
           console.error('清除跳过片头片尾配置失败:', err);
         }
       }
+
+      // await 期间可能被手动换源或切集抢占：旧请求不得覆盖新状态，
+      // 也不得再改 URL / 播放器状态。这是自动换源竞态的关键闸门。
+      if (!coordinator.canCommit(token)) return;
 
       const newDetail = availableSources.find(
         (source) => source.source === newSource && source.id === newId
@@ -1723,9 +1746,14 @@ export function usePlayEngine() {
         setIsVideoLoading(false);
       }, 100);
     } catch (err) {
+      // 已作废的请求若在此清 loading / 写 error，会覆盖新换源的状态
+      if (!coordinator.canCommit(token)) return;
       // 隐藏换源加载状态
       setIsVideoLoading(false);
       setError(err instanceof Error ? err.message : '换源失败');
+    } finally {
+      // 谁 begin 谁 finish；runAutoSwitch 传入的 token 由它自己释放
+      if (ownsToken) coordinator.finish(token);
     }
   };
 
@@ -1743,41 +1771,44 @@ export function usePlayEngine() {
    * 只读 ref，因此可以被注册在任意时刻的回调安全调用。
    */
   const autoSwitchSource = (reason: string) => {
-    const decision = autoSwitchStateRef.current.requestSwitch({
-      currentSource: currentSourceRef.current ?? '',
-      currentId: currentIdRef.current ?? '',
-      candidates: availableSourcesRef.current,
-      episodeIndex: currentEpisodeIndexRef.current,
-    });
-
-    if (decision.kind === 'limit-reached') {
-      setError(
-        `播放失败：${reason}。已自动尝试 ${decision.switchCount} 个片源仍未成功，请手动切换片源`
-      );
-      return;
-    }
-
-    if (decision.kind === 'no-candidate') {
-      setError(`播放失败：${reason}。已无可用备用片源，请手动选择`);
-      return;
-    }
-
-    const { candidate } = decision;
-    const notice = `播放失败，已自动切换到「${candidate.source}」`;
-    console.warn(
-      `[auto-switch] ${reason} → ${candidate.source}:${candidate.id}`
-    );
-    try {
-      pushPlayerNotice(artPlayerRef.current, notice, { key: 'auto-switch' });
-    } catch {
-      // ArtPlayer 可能已销毁
-    }
-
-    void handleSourceChangeRef.current?.(
-      candidate.source,
-      candidate.id,
-      candidate.title || '',
-      { auto: true }
+    runAutoSwitch(
+      {
+        state: autoSwitchStateRef.current,
+        coordinator: sourceSwitchCoordinatorRef.current,
+        snapshot: () => ({
+          currentSource: currentSourceRef.current ?? '',
+          currentId: currentIdRef.current ?? '',
+          candidates: availableSourcesRef.current,
+          episodeIndex: currentEpisodeIndexRef.current,
+        }),
+        // 返回 Promise，让协调器在整个异步换源结束后才释放锁
+        apply: (candidate, token) => {
+          const pending = handleSourceChangeRef.current?.(
+            candidate.source,
+            candidate.id,
+            candidate.title || '',
+            { auto: true, token }
+          );
+          return pending ?? Promise.resolve();
+        },
+        onNotice: (candidate) => {
+          try {
+            pushPlayerNotice(
+              artPlayerRef.current,
+              `播放失败，已自动切换到「${candidate.source}」`,
+              { key: 'auto-switch' }
+            );
+          } catch {
+            // ArtPlayer 可能已销毁
+          }
+        },
+        onError: (message) => setError(message),
+        log: (message) => {
+          // eslint-disable-next-line no-console
+          console.warn(message);
+        },
+      },
+      reason
     );
   };
 
@@ -1792,6 +1823,8 @@ export function usePlayEngine() {
   const handleEpisodeChange = async (episodeNumber: number) => {
     if (episodeNumber === currentEpisodeIndexRef.current) return;
     if (episodeNumber >= 0 && episodeNumber < totalEpisodes) {
+      // 切集立刻作废尚未落地的自动换源，避免旧请求在 await 之后覆盖新集数
+      sourceSwitchCoordinatorRef.current.invalidate();
       isEpisodeSwitchingRef.current = true;
       hideDanmakuDuringEpisodeSwitch();
       // 在更换集数前保存当前播放进度
@@ -1821,7 +1854,8 @@ export function usePlayEngine() {
       } catch {
         resumeTimeRef.current = 0;
       }
-      // 换集是新的播放尝试，重新给满 3 次自动换源机会
+      // 换集是新的播放尝试：作废旧换源并重新给满 3 次自动换源机会
+      sourceSwitchCoordinatorRef.current.invalidate();
       autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(episodeNumber);
     }
@@ -1839,6 +1873,7 @@ export function usePlayEngine() {
       if (artPlayerRef.current) {
         setCurrentTooltip('');
       }
+      sourceSwitchCoordinatorRef.current.invalidate();
       autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(idx - 1);
     }
@@ -1856,6 +1891,7 @@ export function usePlayEngine() {
       if (artPlayerRef.current) {
         setCurrentTooltip('');
       }
+      sourceSwitchCoordinatorRef.current.invalidate();
       autoSwitchStateRef.current.reset();
       setCurrentEpisodeIndex(idx + 1);
     }

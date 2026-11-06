@@ -87,3 +87,122 @@ export class AutoSourceSwitchState {
     return { kind: 'switch', candidate, switchCount: this.count };
   }
 }
+
+/* -------------------------------------------------------------------------- *
+ * 换源并发协调
+ * -------------------------------------------------------------------------- */
+
+export type SourceSwitchKind = 'auto' | 'manual';
+
+/**
+ * 换源中锁 + 请求序号。
+ *
+ * `autoSwitchSource()` 会同步消费一次状态机计数，但真正的换源动作
+ * `handleSourceChange()` 在写状态前要 await 跳过片头配置的删除与保存。
+ * 同一轮播放失败若连续触发多次 HLS 错误回调，就会出现两个异步换源并发：
+ * 前者选 B、后者选 C，计数被重复消耗，最终生效的源由完成顺序决定。
+ *
+ * 规则：
+ *  - `auto` 在已有换源进行时直接拒绝（返回 null），不消耗状态机计数；
+ *  - `manual` / 切集可以抢占并作废旧请求，旧请求 await 回来后
+ *    `canCommit()` 为 false，不得写回状态覆盖用户的新选择；
+ *  - 谁 `begin()` 谁 `finish()`，`finish` 只释放序号仍最新的那一把锁。
+ */
+export class SourceSwitchCoordinator {
+  private inflight = false;
+
+  private sequence = 0;
+
+  private latestToken = 0;
+
+  get busy(): boolean {
+    return this.inflight;
+  }
+
+  /** 当前有效的请求序号（0 表示已全部作废），供诊断与测试使用 */
+  get currentToken(): number {
+    return this.latestToken;
+  }
+
+  begin(kind: SourceSwitchKind): number | null {
+    if (kind === 'auto' && this.inflight) return null;
+    this.sequence += 1;
+    this.latestToken = this.sequence;
+    this.inflight = true;
+    return this.latestToken;
+  }
+
+  /** await 之后、写任何状态之前必须过这道闸门 */
+  canCommit(token: number): boolean {
+    return this.inflight && token === this.latestToken;
+  }
+
+  finish(token: number): void {
+    if (token !== this.latestToken) return;
+    this.inflight = false;
+  }
+
+  /** 切集 / 换片 / 组件卸载：作废所有未落地的换源 */
+  invalidate(): void {
+    this.sequence += 1;
+    this.latestToken = 0;
+    this.inflight = false;
+  }
+}
+
+export interface AutoSwitchRuntime {
+  state: AutoSourceSwitchState;
+  coordinator: SourceSwitchCoordinator;
+  /** 每次决策都读最新 ref，避免闭包过期 */
+  snapshot: () => Parameters<AutoSourceSwitchState['requestSwitch']>[0];
+  /** 真正执行换源（内部 await），token 用于完成后判定是否仍可提交 */
+  apply: (
+    candidate: AutoSwitchCandidate,
+    token: number
+  ) => void | Promise<void>;
+  onNotice: (candidate: AutoSwitchCandidate) => void;
+  onError: (message: string) => void;
+  log?: (message: string) => void;
+}
+
+/**
+ * 自动换源调度：把「取锁 → 状态机决策 → 异步应用 → 释放锁」收在一个纯逻辑函数里，
+ * 生产代码与竞态回归测试跑的是同一份实现。
+ */
+export function runAutoSwitch(
+  runtime: AutoSwitchRuntime,
+  reason: string
+): void {
+  const { coordinator, state } = runtime;
+  if (coordinator.busy) return;
+
+  const token = coordinator.begin('auto');
+  if (token === null) return;
+
+  const decision = state.requestSwitch(runtime.snapshot());
+  if (decision.kind !== 'switch') {
+    coordinator.finish(token);
+    runtime.onError(
+      decision.kind === 'limit-reached'
+        ? `播放失败：${reason}。已自动尝试 ${decision.switchCount} 个片源仍未成功，请手动切换片源`
+        : `播放失败：${reason}。已无可用备用片源，请手动选择`
+    );
+    return;
+  }
+
+  runtime.log?.(
+    `[auto-switch] ${reason} → ${decision.candidate.source}:${decision.candidate.id}`
+  );
+  runtime.onNotice(decision.candidate);
+
+  void Promise.resolve()
+    .then(() => runtime.apply(decision.candidate, token))
+    .catch((error: unknown) => {
+      if (coordinator.canCommit(token)) {
+        runtime.onError(
+          error instanceof Error ? error.message : '自动换源失败'
+        );
+      }
+    })
+    .finally(() => coordinator.finish(token));
+}
