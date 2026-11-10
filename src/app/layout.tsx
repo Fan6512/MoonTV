@@ -7,6 +7,12 @@ import './globals.css';
 import 'sweetalert2/dist/sweetalert2.min.css';
 
 import { getConfig } from '@/lib/config';
+import {
+  markConfigRead,
+  ms,
+  observeLog,
+  observeScope,
+} from '@/lib/perf-observe';
 import { getDefaultPlaybackSaveInterval } from '@/lib/playback-settings';
 
 import ConditionalNav from '../components/ConditionalNav';
@@ -26,11 +32,25 @@ const inter = Inter({ subsets: ['latin'] });
 
 // 动态生成 metadata，支持配置更新后的标题变化
 export async function generateMetadata(): Promise<Metadata> {
+  const scope = observeScope();
+  const started = performance.now();
   let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV';
   if (process.env.NEXT_PUBLIC_STORAGE_TYPE !== 'localstorage') {
+    const seq = markConfigRead(scope);
+    const configStarted = performance.now();
     const config = await getConfig();
+    observeLog('config_read', scope, {
+      stage: 'generateMetadata',
+      seq,
+      duration_ms: ms(configStarted),
+    });
     siteName = config.SiteConfig.SiteName;
   }
+
+  observeLog('ssr_stage', scope, {
+    stage: 'generateMetadata',
+    duration_ms: ms(started),
+  });
 
   return {
     title: siteName,
@@ -48,6 +68,8 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const scope = observeScope();
+  const started = performance.now();
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
 
   let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV';
@@ -61,19 +83,23 @@ export default async function RootLayout({
     process.env.NEXT_PUBLIC_DOUBAN_IMAGE_PROXY_TYPE || 'direct';
   let doubanImageProxy = process.env.NEXT_PUBLIC_DOUBAN_IMAGE_PROXY || '';
   let bangumiProxy = process.env.NEXT_PUBLIC_BANGUMI_PROXY || '';
-  let bangumiImageProxy =
-    process.env.NEXT_PUBLIC_BANGUMI_IMAGE_PROXY || '';
+  let bangumiImageProxy = process.env.NEXT_PUBLIC_BANGUMI_IMAGE_PROXY || '';
   let disableYellowFilter =
     process.env.NEXT_PUBLIC_DISABLE_YELLOW_FILTER === 'true';
-  let danmakuApiBaseUrl =
-    process.env.NEXT_PUBLIC_DANMU_API_BASE_URL ||
-    '';
+  let danmakuApiBaseUrl = process.env.NEXT_PUBLIC_DANMU_API_BASE_URL || '';
   let playbackSaveInterval =
     Number(process.env.NEXT_PUBLIC_PLAYBACK_SAVE_INTERVAL) ||
     getDefaultPlaybackSaveInterval(storageType);
   let autoUpdateEnabled = false;
   if (storageType !== 'localstorage') {
+    const seq = markConfigRead(scope);
+    const configStarted = performance.now();
     const config = await getConfig();
+    observeLog('config_read', scope, {
+      stage: 'RootLayout',
+      seq,
+      duration_ms: ms(configStarted),
+    });
     siteName = config.SiteConfig.SiteName;
     announcement = config.SiteConfig.Announcement;
     enableRegister = config.UserConfig.AllowRegister;
@@ -111,6 +137,11 @@ export default async function RootLayout({
     PLAYBACK_SAVE_INTERVAL: playbackSaveInterval,
   };
 
+  observeLog('ssr_stage', scope, {
+    stage: 'RootLayout',
+    duration_ms: ms(started),
+  });
+
   return (
     <html lang='zh-CN' suppressHydrationWarning>
       <head>
@@ -141,13 +172,13 @@ export default async function RootLayout({
             <SiteProvider siteName={siteName} announcement={announcement}>
               <NavigationLoadingIndicator />
               <UserOnlineUpdate />
-              
+
               {/* 条件导航栏 - 根据路径自动判断是否显示 */}
               <ConditionalNav />
-              
+
               {/* 全局下载管理器 - 只渲染一次，被所有导航栏共享 */}
               <GlobalDownloadManager />
-              
+
               {/* 页面内容 */}
               <div className='relative w-full'>
                 <main
@@ -159,7 +190,7 @@ export default async function RootLayout({
                   {children}
                 </main>
               </div>
-              
+
               <GlobalErrorIndicator />
               {autoUpdateEnabled && <SubscriptionAutoUpdate />}
             </SiteProvider>

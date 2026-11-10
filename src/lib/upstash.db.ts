@@ -2,6 +2,8 @@
 
 import { Redis } from '@upstash/redis';
 
+import { ms, observeLog, observeScope } from '@/lib/perf-observe';
+
 import { AdminConfig } from './admin.types';
 import {
   Favorite,
@@ -27,11 +29,25 @@ function ensureStringArray(value: any[]): string[] {
 // 添加Upstash Redis操作重试包装器
 async function withRetry<T>(
   operation: () => Promise<T>,
-  maxRetries = 3
+  maxRetries = 3,
+  label?: string
 ): Promise<T> {
+  const scope = label ? observeScope() : null;
+  const started = performance.now();
   for (let i = 0; i < maxRetries; i++) {
+    const attemptStarted = performance.now();
     try {
-      return await operation();
+      const result = await operation();
+      if (label) {
+        observeLog('retry_done', scope, {
+          op: label,
+          layer: 'app',
+          attempts: i + 1,
+          app_attempt_ms_incl_sdk: ms(attemptStarted),
+          duration_ms: ms(started),
+        });
+      }
+      return result;
     } catch (err: any) {
       const isLastAttempt = i === maxRetries - 1;
       const isConnectionError =
@@ -41,18 +57,40 @@ async function withRetry<T>(
         err.code === 'ECONNRESET' ||
         err.code === 'EPIPE' ||
         err.name === 'UpstashError';
+      const errorClass =
+        err.name === 'UpstashError' ? 'upstash_error' : 'connection';
 
       if (isConnectionError && !isLastAttempt) {
+        if (label) {
+          observeLog('retry_attempt', scope, {
+            op: label,
+            layer: 'app',
+            attempt: i + 1,
+            app_attempt_ms_incl_sdk: ms(attemptStarted),
+            error_class: errorClass,
+          });
+        }
         console.log(
           `Upstash Redis operation failed, retrying... (${i + 1}/${maxRetries})`
         );
-        console.error('Error:', err.message);
+        // P1: error messages may embed the REST URL; only the class is logged.
+        console.error('Error:', errorClass);
 
         // 等待一段时间后重试
         await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
         continue;
       }
 
+      if (label) {
+        observeLog('retry_failed', scope, {
+          op: label,
+          layer: 'app',
+          attempts: i + 1,
+          app_attempt_ms_incl_sdk: ms(attemptStarted),
+          duration_ms: ms(started),
+          error_class: errorClass,
+        });
+      }
       throw err;
     }
   }
@@ -90,14 +128,19 @@ export class UpstashRedisStorage implements IStorage {
     // 删除同名的旧记录
     if (record.title) {
       const pattern = `u:${userName}:pr:*`;
-      const allKeys: string[] = await withRetry(() => this.client.keys(pattern));
-      
+      const allKeys: string[] = await withRetry(() =>
+        this.client.keys(pattern)
+      );
+
       for (const fullKey of allKeys) {
         const val = await withRetry(() => this.client.get(fullKey));
         if (val) {
           const existingRecord = val as PlayRecord;
           // 如果找到同名但不是当前key的记录，则删除它
-          if (existingRecord.title === record.title && fullKey !== this.prKey(userName, key)) {
+          if (
+            existingRecord.title === record.title &&
+            fullKey !== this.prKey(userName, key)
+          ) {
             await withRetry(() => this.client.del(fullKey));
           }
         }
@@ -189,12 +232,12 @@ export class UpstashRedisStorage implements IStorage {
     key: string,
     following: Following
   ): Promise<void> {
-    await withRetry(() => this.client.set(this.folKey(userName, key), following));
+    await withRetry(() =>
+      this.client.set(this.folKey(userName, key), following)
+    );
   }
 
-  async getAllFollowings(
-    userName: string
-  ): Promise<Record<string, Following>> {
+  async getAllFollowings(userName: string): Promise<Record<string, Following>> {
     const pattern = `u:${userName}:fol:*`;
     const keys: string[] = await withRetry(() => this.client.keys(pattern));
     if (keys.length === 0) return {};
@@ -347,11 +390,23 @@ export class UpstashRedisStorage implements IStorage {
   }
 
   async getAdminConfig(): Promise<AdminConfig | null> {
-    const val = await withRetry(() => this.client.get(this.adminConfigKey()));
+    const scope = observeScope();
+    const started = performance.now();
+    const val = await withRetry(
+      () => this.client.get(this.adminConfigKey()),
+      3,
+      'getAdminConfig'
+    );
+    observeLog('admin_get', scope, {
+      duration_ms: ms(started),
+      hit: Boolean(val),
+    });
     return val ? (val as AdminConfig) : null;
   }
 
   async setAdminConfig(config: AdminConfig): Promise<void> {
+    // P1 safety marker: initConfig() writes here when admin:config is missing.
+    observeLog('admin_set_called', observeScope(), { write: 1 });
     await withRetry(() => this.client.set(this.adminConfigKey(), config));
   }
 
@@ -427,9 +482,7 @@ export class UpstashRedisStorage implements IStorage {
     return `u:${user}:today_updated`; // u:username:today_updated
   }
 
-  async getTodayUpdated(
-    userName: string
-  ): Promise<TodayUpdatedRecord | null> {
+  async getTodayUpdated(userName: string): Promise<TodayUpdatedRecord | null> {
     const val = await withRetry(() =>
       this.client.get(this.todayUpdatedKey(userName))
     );
