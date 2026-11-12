@@ -1,82 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-import he from 'he';
-import Hls from 'hls.js';
-
-function getDoubanImageProxyConfig(): {
-  proxyType:
-    | 'direct'
-    | 'server'
-    | 'img3'
-    | 'cmliussss-cdn-tencent'
-    | 'cmliussss-cdn-ali'
-    | 'custom';
-  proxyUrl: string;
-} {
-  const doubanImageProxyType =
-    localStorage.getItem('doubanImageProxyType') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY_TYPE ||
-    'direct';
-  const doubanImageProxy =
-    localStorage.getItem('doubanImageProxyUrl') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY ||
-    '';
-  return {
-    proxyType: doubanImageProxyType,
-    proxyUrl: doubanImageProxy,
-  };
-}
-
 /**
- * 处理图片 URL，如果设置了图片代理则使用代理
+ * 播放源探测：读取 m3u8 的分辨率、首片加载速度与 ping。
+ *
+ * 与 `utils.ts` 分离的原因：`hls.js`（约 508KB / 155KB gzip）仅在此处使用，若放在公共
+ * utils 里，任何引用 `processImageUrl` / `getRequestTimeout` 的页面都会被迫下载整个播放库。
+ * 这里改为**函数内动态 import**，只有真正执行探测时才加载。
  */
-export function processImageUrl(originalUrl: string): string {
-  if (!originalUrl) return originalUrl;
 
-  const normalizedUrl = originalUrl.trim();
-
-  // 已经是本地代理、内联资源或本地资源时，直接返回
-  if (
-    normalizedUrl.startsWith('/api/image-proxy?url=') ||
-    normalizedUrl.startsWith('data:') ||
-    normalizedUrl.startsWith('blob:') ||
-    normalizedUrl.startsWith('/')
-  ) {
-    return normalizedUrl;
-  }
-
-  // HTTPS 页面下直接加载 http 图片会触发 Mixed Content，统一走服务端代理兜底
-  if (normalizedUrl.startsWith('http://')) {
-    return `/api/image-proxy?url=${encodeURIComponent(normalizedUrl)}`;
-  }
-
-  // 仅处理豆瓣图片代理
-  if (!normalizedUrl.includes('doubanio.com')) {
-    return normalizedUrl;
-  }
-
-  const { proxyType, proxyUrl } = getDoubanImageProxyConfig();
-  switch (proxyType) {
-    case 'server':
-      return `/api/image-proxy?url=${encodeURIComponent(normalizedUrl)}`;
-    case 'img3':
-      return normalizedUrl.replace(/img\d+\.doubanio\.com/g, 'img3.doubanio.com');
-    case 'cmliussss-cdn-tencent':
-      return normalizedUrl.replace(
-        /img\d+\.doubanio\.com/g,
-        'img.doubanio.cmliussss.net'
-      );
-    case 'cmliussss-cdn-ali':
-      return normalizedUrl.replace(
-        /img\d+\.doubanio\.com/g,
-        'img.doubanio.cmliussss.com'
-      );
-    case 'custom':
-      return `${proxyUrl}${encodeURIComponent(normalizedUrl)}`;
-    case 'direct':
-    default:
-      return normalizedUrl;
-  }
-}
+/* eslint-disable @typescript-eslint/no-explicit-any, no-console */
 
 /**
  * 从m3u8地址获取视频质量等级和网络信息
@@ -89,6 +19,9 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
   pingTime: number; // 网络延迟（毫秒）
 }> {
   try {
+    // 按需加载播放库，避免进入全站首屏 bundle
+    const { default: Hls } = await import('hls.js');
+
     // 直接使用m3u8 URL作为视频源，避免CORS问题
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
@@ -233,42 +166,4 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       }`
     );
   }
-}
-
-export function cleanHtmlTags(text: string): string {
-  if (!text) return '';
-
-  const cleanedText = text
-    .replace(/<[^>]+>/g, '\n') // 将 HTML 标签替换为换行
-    .replace(/\n+/g, '\n') // 将多个连续换行合并为一个
-    .replace(/[ \t]+/g, ' ') // 将多个连续空格和制表符合并为一个空格，但保留换行符
-    .replace(/^\n+|\n+$/g, '') // 去掉首尾换行
-    .trim(); // 去掉首尾空格
-
-  // 使用 he 库解码 HTML 实体
-  return he.decode(cleanedText);
-}
-
-/**
- * 获取配置的超时时间（秒）
- * 从 localStorage 读取，如果不存在或无效则返回默认值3秒
- */
-export function getRequestTimeout(): number {
-  if (typeof window === 'undefined') {
-    return 30; // 服务器端返回默认值
-  }
-  
-  try {
-    const savedTimeout = localStorage.getItem('requestTimeout');
-    if (savedTimeout) {
-      const timeoutSeconds = parseInt(savedTimeout, 10);
-      if (!isNaN(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 60) {
-        return timeoutSeconds;
-      }
-    }
-  } catch (error) {
-    console.warn('Failed to read timeout from localStorage:', error);
-  }
-  
-  return 30; // 默认30秒
 }

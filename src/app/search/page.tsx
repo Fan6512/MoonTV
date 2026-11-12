@@ -20,9 +20,9 @@ import {
   getSearchHistory,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { getRequestTimeout } from '@/lib/request-timeout';
 import { matchesSearchTitle } from '@/lib/search-title';
 import { SearchResult } from '@/lib/types';
-import { getRequestTimeout } from '@/lib/utils';
 
 import FailedSourcesDisplay from '@/components/FailedSourcesDisplay';
 import FilterOptions from '@/components/FilterOptions';

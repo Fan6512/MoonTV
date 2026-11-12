@@ -9,8 +9,9 @@ import React, {
   useState,
 } from 'react';
 
+import { processImageUrl } from '@/lib/image-utils';
 import { SearchResult } from '@/lib/types';
-import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import { getVideoResolutionFromM3u8 } from '@/lib/video-probe';
 
 // 定义视频信息类型
 interface VideoInfo {

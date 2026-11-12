@@ -45,19 +45,16 @@ import {
   resolveLevelHeight,
   savePreferredQualityHeight,
 } from '@/lib/hls-quality';
+import { processImageUrl } from '@/lib/image-utils';
 import { describeHlsError, PlaybackRecovery } from '@/lib/playback-recovery';
 import { getDefaultPlaybackSaveInterval } from '@/lib/playback-settings';
 import {
   getWarmupConcurrency,
   shouldThrottlePrefetch,
 } from '@/lib/prefetch-scheduler';
+import { getRequestTimeout } from '@/lib/request-timeout';
 import { matchesFullSearchTitle } from '@/lib/search-title';
 import { SearchResult } from '@/lib/types';
-import {
-  getRequestTimeout,
-  getVideoResolutionFromM3u8,
-  processImageUrl,
-} from '@/lib/utils';
 import {
   CACHE_CONCURRENCY_PRESETS,
   clearVideoCache,
@@ -71,6 +68,7 @@ import {
   getVideoPrefetcher,
   PrefetchStats,
 } from '@/lib/video-prefetcher';
+import { getVideoResolutionFromM3u8 } from '@/lib/video-probe';
 
 import { triggerGlobalError } from '@/components/GlobalErrorIndicator';
 

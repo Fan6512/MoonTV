@@ -28,9 +28,9 @@ import {
   saveFollowing,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { processImageUrl } from '@/lib/image-utils';
 import { getIntro } from '@/lib/intro.client';
 import { SearchResult } from '@/lib/types';
-import { processImageUrl } from '@/lib/utils';
 
 import FollowingIcon from '@/components/FollowingIcon';
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
