@@ -11,7 +11,7 @@ import {
   MAX_SEARCH_CONCURRENCY,
 } from '@/lib/concurrency';
 import { getAvailableApiSitesClient } from '@/lib/config.client';
-import { getRequestTimeout } from '@/lib/utils';
+import { getRequestTimeout } from '@/lib/request-timeout';
 
 interface SourceSelectorProps {
   selectedSources: string[];
