@@ -15,10 +15,5 @@
       "path": "/api/cron",
       "schedule": "0 1 * * *"
     }
-  ],
-  "git": {
-    "deploymentEnabled": {
-      "perf/observe-config-latency": false
-    }
-  }
+  ]
 }
