@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, @typescript-eslint/no-non-null-assertion */
 
+import { cache } from 'react';
+
 import { getStorage } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
@@ -643,6 +645,30 @@ export async function getConfig(): Promise<AdminConfig> {
 
   return cachedConfig;
 }
+
+
+/**
+ * Request-scoped config read for the root Server Components render.
+ * Keep getConfig() unchanged for API routes and other non-RSC callers.
+ */
+export const getRequestConfig = cache(async (): Promise<AdminConfig> => {
+  const startedAt = performance.now();
+  const config = await getConfig();
+
+  // Temporary Preview-only evidence: this log should appear once per HTML render.
+  if (process.env.VERCEL_ENV === 'preview') {
+    console.log(
+      JSON.stringify({
+        event: 'request_config_read',
+        rid: crypto.randomUUID(),
+        duration_ms:
+          Math.round((performance.now() - startedAt) * 100) / 100,
+      })
+    );
+  }
+
+  return config;
+});
 
 export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   // 确保必要的属性存在和初始化
