@@ -6,7 +6,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import 'sweetalert2/dist/sweetalert2.min.css';
 
-import { getConfig } from '@/lib/config';
+import { getRequestConfig } from '@/lib/config';
 import { getDefaultPlaybackSaveInterval } from '@/lib/playback-settings';
 
 import ConditionalNav from '../components/ConditionalNav';
@@ -28,7 +28,7 @@ const inter = Inter({ subsets: ['latin'] });
 export async function generateMetadata(): Promise<Metadata> {
   let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV';
   if (process.env.NEXT_PUBLIC_STORAGE_TYPE !== 'localstorage') {
-    const config = await getConfig();
+    const config = await getRequestConfig();
     siteName = config.SiteConfig.SiteName;
   }
 
@@ -73,7 +73,7 @@ export default async function RootLayout({
     getDefaultPlaybackSaveInterval(storageType);
   let autoUpdateEnabled = false;
   if (storageType !== 'localstorage') {
-    const config = await getConfig();
+    const config = await getRequestConfig();
     siteName = config.SiteConfig.SiteName;
     announcement = config.SiteConfig.Announcement;
     enableRegister = config.UserConfig.AllowRegister;

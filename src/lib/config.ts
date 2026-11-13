@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, @typescript-eslint/no-non-null-assertion */
 
+import { cache } from 'react';
+
 import { getStorage } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
@@ -643,6 +645,16 @@ export async function getConfig(): Promise<AdminConfig> {
 
   return cachedConfig;
 }
+
+
+/**
+ * Request-scoped config read for the root Server Components render.
+ * React cache deduplicates generateMetadata() and RootLayout() within one render.
+ * Keep getConfig() unchanged for API routes and other non-RSC callers.
+ */
+export const getRequestConfig = cache(
+  async (): Promise<AdminConfig> => getConfig()
+);
 
 export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   // 确保必要的属性存在和初始化
