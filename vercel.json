@@ -15,5 +15,10 @@
       "path": "/api/cron",
       "schedule": "0 1 * * *"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "perf/douban-data-cache": false
+    }
+  }
 }
