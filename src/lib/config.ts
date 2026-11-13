@@ -647,20 +647,35 @@ export async function getConfig(): Promise<AdminConfig> {
 }
 
 
+type RequestConfigScope = {
+  rid: string;
+  seq: number;
+};
+
+const getRequestConfigScope = cache(
+  (): RequestConfigScope => ({
+    rid: crypto.randomUUID(),
+    seq: 0,
+  })
+);
+
 /**
  * Request-scoped config read for the root Server Components render.
  * Keep getConfig() unchanged for API routes and other non-RSC callers.
  */
 export const getRequestConfig = cache(async (): Promise<AdminConfig> => {
+  const scope = getRequestConfigScope();
+  scope.seq += 1;
   const startedAt = performance.now();
   const config = await getConfig();
 
-  // Temporary Preview-only evidence: this log should appear once per HTML render.
+  // Temporary Preview-only evidence: one event per underlying config read.
   if (process.env.VERCEL_ENV === 'preview') {
     console.log(
       JSON.stringify({
         event: 'request_config_read',
-        rid: crypto.randomUUID(),
+        rid: scope.rid,
+        seq: scope.seq,
         duration_ms:
           Math.round((performance.now() - startedAt) * 100) / 100,
       })
